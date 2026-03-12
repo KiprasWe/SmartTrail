@@ -1,86 +1,182 @@
 import { prisma } from "../config/db.js";
 import bcrypt from "bcryptjs";
-import { generateToken } from "../utils/generateToken.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+} from "../utils/generateToken.js";
+import { generateUniqueUsername } from "../utils/generateUniqueUsername.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { Errors, Success, sendError, sendSuccess } from "../utils/responses.js";
+import { OAuth2Client } from "google-auth-library";
+import crypto from "crypto";
 
-const signup = async (req, res) => {
-  const { username, email, password } = req.body;
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-  const userExists = await prisma.user.findUnique({ where: { email } });
+// Helpers
 
-  if (userExists) {
-    return res
-      .status(400)
-      .json({ error: "User already exists with this email" });
+const buildTokenPair = async (userId) => ({
+  accessToken: generateAccessToken(userId),
+  refreshToken: await generateRefreshToken(userId),
+});
+
+const buildUserPayload = (user) => ({
+  id: user.id,
+  username: user.username,
+  email: user.email,
+});
+
+const hashToken = (token) =>
+  crypto.createHash("sha256").update(token).digest("hex");
+
+// Controllers
+
+export const googleAuth = asyncHandler(async (req, res) => {
+  const { idToken } = req.body;
+
+  let payload;
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    payload = ticket.getPayload();
+  } catch {
+    return sendError(res, Errors.ID_TOKEN_INVALID);
   }
 
-  // Hash password
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(password, salt);
+  const { sub: googleId, email, name, picture } = payload;
 
-  // Create user
-  const user = await prisma.user.create({
-    data: {
-      username,
-      email,
-      password: hashedPassword,
+  // OAuth jau susietas
+  const existingOAuth = await prisma.oAuthAccount.findUnique({
+    where: {
+      provider_providerId: { provider: "google", providerId: googleId },
     },
+    include: { user: true },
   });
 
-  // Generate token
-  const token = generateToken(user.id, res);
+  if (existingOAuth) {
+    const tokens = await buildTokenPair(existingOAuth.userId);
+    return sendSuccess(res, Success.USER_LOGGED_IN, {
+      user: buildUserPayload(existingOAuth.user),
+      ...tokens,
+    });
+  }
 
-  res.status(201).json({
-    status: "success",
-    data: {
-      user: {
-        id: user.id,
-        username: username,
-        email: email,
+  // Emailas jau uzregintas, tai susiejam su oauth
+  const existingUser = await prisma.user.findUnique({ where: { email } });
+
+  if (existingUser) {
+    await prisma.oAuthAccount.create({
+      data: {
+        provider: "google",
+        providerId: googleId,
+        userId: existingUser.id,
       },
-      token,
+    });
+
+    const tokens = await buildTokenPair(existingUser.id);
+    return sendSuccess(res, Success.USER_LOGGED_IN, {
+      user: buildUserPayload(existingUser),
+      ...tokens,
+    });
+  }
+
+  // naujas useris, uzreginam
+  const newUser = await prisma.user.create({
+    data: {
+      email,
+      username: await generateUniqueUsername(name),
+      profilePicture: picture,
+      oAuthAccounts: {
+        create: { provider: "google", providerId: googleId },
+      },
     },
   });
-};
 
-const signin = async (req, res) => {
+  const tokens = await buildTokenPair(newUser.id);
+  return sendSuccess(res, Success.USER_CREATED, {
+    user: buildUserPayload(newUser),
+    ...tokens,
+  });
+});
+
+export const signup = asyncHandler(async (req, res) => {
+  const { username, email, password } = req.body;
+  // passworda tikrinam su zod schema
+
+  const [emailTaken, usernameTaken] = await Promise.all([
+    prisma.user.findUnique({ where: { email } }),
+    prisma.user.findUnique({ where: { username } }),
+  ]);
+
+  if (emailTaken) return sendError(res, Errors.USER_EMAIL_EXISTS);
+  if (usernameTaken) return sendError(res, Errors.USER_USERNAME_EXISTS);
+
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const user = await prisma.user.create({
+    data: { username, email, password: hashedPassword },
+  });
+
+  const tokens = await buildTokenPair(user.id);
+  return sendSuccess(res, Success.USER_CREATED, {
+    user: buildUserPayload(user),
+    ...tokens,
+  });
+});
+
+export const signin = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
   const user = await prisma.user.findUnique({ where: { email } });
 
-  if (!user) {
-    return res.status(401).json({ error: "Invalid email or password" });
+  // Nera userio arba neturi passwordo
+  if (!user || !user.password) {
+    return sendError(res, Errors.INVALID_LOGIN);
   }
 
   const isPasswordValid = await bcrypt.compare(password, user.password);
-
   if (!isPasswordValid) {
-    return res.status(401).json({ error: "Invalid email or password" });
+    return sendError(res, Errors.INVALID_LOGIN);
   }
 
-  // Generate token
-  const token = generateToken(user.id, res);
-
-  res.status(201).json({
-    status: "success",
-    data: {
-      user: {
-        id: user.id,
-        email: email,
-      },
-      token,
-    },
+  const tokens = await buildTokenPair(user.id);
+  return sendSuccess(res, Success.USER_LOGGED_IN, {
+    user: buildUserPayload(user),
+    ...tokens,
   });
-};
+});
 
-const signout = async (req, res) => {
-  res.cookie("jwt", "", {
-    httpOnly: true,
-    expires: new Date(0),
-  });
-  res.status(200).json({
-    status: "success",
-    message: "Logged out successfully",
-  });
-};
+export const refresh = asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body;
 
-export { signup, signin, signout };
+  const storedToken = await prisma.refreshToken.findUnique({
+    where: { token: hashToken(refreshToken) },
+    include: { user: true },
+  });
+
+  if (!storedToken) {
+    return sendError(res, Errors.INVALID_REFRESH_TOKEN);
+  }
+
+  await prisma.refreshToken.delete({ where: { id: storedToken.id } });
+
+  if (storedToken.expiresAt < new Date()) {
+    return sendError(res, Errors.REFRESH_TOKEN_EXPIRED);
+  }
+
+  const tokens = await buildTokenPair(storedToken.userId);
+  return sendSuccess(res, Success.REFRESH_TOKEN_CREATED, tokens);
+});
+
+export const signout = asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body;
+
+  if (refreshToken) {
+    await prisma.refreshToken.deleteMany({
+      where: { token: hashToken(refreshToken) },
+    });
+  }
+
+  return sendSuccess(res, Success.USER_LOGGED_OUT);
+});

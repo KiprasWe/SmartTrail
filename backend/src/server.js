@@ -5,6 +5,9 @@ import { config } from "dotenv";
 import { connectDB, disconnectDB } from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
+import userRoutes from "./routes/userRoutes.js";
+
+import { errorHandler } from "./middleware/errorHandler.js";
 
 config();
 connectDB();
@@ -15,10 +18,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/auth", authRoutes);
+app.use("/user", userRoutes);
+
+app.use(errorHandler);
 
 const PORT = 5001;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server is running on port ${PORT}`);
 });
 

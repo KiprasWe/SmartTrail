@@ -15,10 +15,37 @@ datasource db {
 
 model User {
   id String @id @default(uuid())
-  username String
+  profilePicture String?
+  username String @unique
+  bio String?
   email String @unique
-  password String
+  password String?
+
+  oAuthAccounts OAuthAccount[]
+  refreshTokens RefreshToken[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model OAuthAccount {
+  id String @id @default(uuid())
+  provider String // google, apple, github ir kt.
+  providerId String
+
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([provider, providerId])
+}
+
+model RefreshToken {
+  id String @id @default(uuid())
+  token String @unique
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }

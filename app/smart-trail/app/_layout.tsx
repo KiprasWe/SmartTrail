@@ -34,6 +34,24 @@ function RootLayoutNav() {
       <Stack>
         <Stack.Protected guard={!!user}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="route-map"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "slide_from_bottom",
+              gestureEnabled: true,
+            }}
+          />
+          <Stack.Screen
+            name="search-users"
+            options={{
+              headerShown: false,
+              presentation: "fullScreenModal",
+              animation: "slide_from_bottom",
+              gestureEnabled: true,
+            }}
+          />
         </Stack.Protected>
         <Stack.Protected guard={!user}>
           <Stack.Screen

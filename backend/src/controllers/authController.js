@@ -12,8 +12,6 @@ import crypto from "crypto";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Helpers
-
 const buildTokenPair = async (userId) => ({
   accessToken: generateAccessToken(userId),
   refreshToken: await generateRefreshToken(userId),
@@ -27,8 +25,6 @@ const buildUserPayload = (user) => ({
 
 const hashToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
-
-// Controllers
 
 export const googleAuth = asyncHandler(async (req, res) => {
   const { idToken } = req.body;

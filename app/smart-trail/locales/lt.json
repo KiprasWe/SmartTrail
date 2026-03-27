@@ -1,0 +1,60 @@
+{
+  "auth": {
+    "signIn": "Prisijungti",
+    "signUp": "Registruotis",
+    "createAccount": "Sukurti paskyrą",
+    "title": {
+      "signIn": "Prisijungimas",
+      "signUp": "Sukurti paskyrą"
+    },
+    "subtitle": {
+      "signIn": "Sveiki sugrįžę",
+      "signUp": "Prisijunkite prie mūsų"
+    },
+    "google": "Tęsti su Google",
+    "divider": "arba",
+    "fields": {
+      "username": "Vartotojo vardas",
+      "email": "El. paštas",
+      "password": "Slaptažodis"
+    },
+    "errors": {
+      "generic": "Klaida"
+    }
+  },
+  "navbar": {
+    "generate": "Generuoti",
+    "profile": "Paskyra"
+  },
+  "profile": {
+    "profile-title": "Jūsų paskyra",
+    "your-routes": "Jūsų maršrutai",
+    "sign-out": "Atsijungti",
+    "edit-profile": "Redaguoti paskyrą",
+    "change-photo": "Keisti nuotrauką",
+    "username": "Vartotojo vardas",
+    "username-placeholder": "Įveskite vartotojo vardą",
+    "bio": "Aprašymas",
+    "bio-placeholder": "Trumpai papasakokite apie save",
+    "save-changes": "Išsaugoti pakeitimus"
+  },
+  "social": {
+    "followers": "Sekėjai",
+    "following": "Sekama",
+    "requests": "Prašymai",
+    "find-people": "Ieškoti žmonių",
+    "search-placeholder": "Ieškoti pagal vartotojo vardą…",
+    "no-results": "Vartotojų nerasta",
+    "follow": "Sekti",
+    "following-btn": "Sekama",
+    "requested": "Išsiųsta",
+    "unfollow": "Nebsekti",
+    "remove": "Pašalinti",
+    "accept": "Priimti",
+    "reject": "Atmesti",
+    "no-followers": "Dar nėra sekėjų",
+    "no-following": "Neseka nė vieno",
+    "no-requests": "Nėra laukiančių prašymų",
+    "private": "Privatus"
+  }
+}

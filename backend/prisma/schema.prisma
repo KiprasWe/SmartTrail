@@ -19,10 +19,14 @@ model User {
   username String @unique
   bio String?
   email String @unique
+  isPublic Boolean @default(true)
   password String?
 
   oAuthAccounts OAuthAccount[]
   refreshTokens RefreshToken[]
+
+  followers Follow[] @relation("Following")
+  following Follow[] @relation("Followers")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -48,4 +52,25 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+model Follow {
+  id String @id @default(uuid())
+  
+  followerId String
+  followingId String
+  status FollowStatus @default(PENDING)
+
+  follower User @relation("Followers", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([followerId, followingId])
+}
+
+enum FollowStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
 }

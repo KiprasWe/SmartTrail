@@ -14,6 +14,15 @@ export const Errors = {
 
   INVALID_REQUEST: { code: "INVALID_REQUEST", status: 400 },
 
+  // Social
+  USER_NOT_FOUND: { code: "USER_NOT_FOUND", status: 404 },
+  CANNOT_FOLLOW_SELF: { code: "CANNOT_FOLLOW_SELF", status: 400 },
+  FOLLOW_ALREADY_EXISTS: { code: "FOLLOW_ALREADY_EXISTS", status: 400 },
+  ALREADY_FOLLOWING: { code: "ALREADY_FOLLOWING", status: 400 },
+  FOLLOW_REQUEST_NOT_FOUND: { code: "FOLLOW_REQUEST_NOT_FOUND", status: 404 },
+  NOT_FOLLOWING: { code: "NOT_FOLLOWING", status: 404 },
+  NOT_A_FOLLOWER: { code: "NOT_A_FOLLOWER", status: 404 },
+
   INTERNAL_SERVER_ERROR: { code: "INTERNAL_SERVER_ERROR", status: 500 },
 };
 
@@ -26,6 +35,20 @@ export const Success = {
   USER_FETCHED: { code: "USER_FETCHED", status: 200 },
   USER_UPDATED: { code: "USER_UPDATED", status: 200 },
   PASSWORD_SET: { code: "PASSWORD_SET", status: 200 },
+
+  // Social
+  USERS_FETCHED: { code: "USERS_FETCHED", status: 200 },
+  NOW_FOLLOWING: { code: "NOW_FOLLOWING", status: 201 },
+  FOLLOW_REQUEST_SENT: { code: "FOLLOW_REQUEST_SENT", status: 201 },
+  FOLLOW_ACCEPTED: { code: "FOLLOW_ACCEPTED", status: 200 },
+  FOLLOW_REJECTED: { code: "FOLLOW_REJECTED", status: 200 },
+  FOLLOW_CANCELLED: { code: "FOLLOW_CANCELLED", status: 200 },
+  UNFOLLOWED: { code: "UNFOLLOWED", status: 200 },
+  FOLLOWER_REMOVED: { code: "FOLLOWER_REMOVED", status: 200 },
+  FOLLOWERS_FETCHED: { code: "FOLLOWERS_FETCHED", status: 200 },
+  FOLLOWING_FETCHED: { code: "FOLLOWING_FETCHED", status: 200 },
+  FOLLOW_REQUESTS_FETCHED: { code: "FOLLOW_REQUESTS_FETCHED", status: 200 },
+  PROFILE_FETCHED: { code: "PROFILE_FETCHED", status: 200 },
 };
 
 export const sendError = (res, error, details = {}) => {

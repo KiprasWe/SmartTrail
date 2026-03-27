@@ -17,7 +17,12 @@
     },
     "android": {
       "package": "com.webbo.smarttrail",
-      "googleMapsApiKey": "AIzaSyBSqH1Fe7114UT34VJ1ikw6fYcHX1R5wwU",
+      "launchMode": "singleTask",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyBSqH1Fe7114UT34VJ1ikw6fYcHX1R5wwU"
+        }
+      },
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -56,7 +61,8 @@
       "expo-secure-store",
       "expo-web-browser",
       "@maplibre/maplibre-react-native",
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      "expo-localization",
     ],
     "experiments": {
       "typedRoutes": true,

@@ -32,6 +32,7 @@ type AuthContextType = {
   token: string | null;
   user: User | null;
   signin: (email: string, password: string) => Promise<void>;
+  signup: (username: string, email: string, password: string) => Promise<void>;
   signout: () => Promise<void>;
   signinWithGoogle: () => Promise<void>;
   authFetch: (
@@ -45,6 +46,7 @@ const AuthContext = createContext<AuthContextType>({
   token: null,
   user: null,
   signin: async () => {},
+  signup: async () => {},
   signout: async () => {},
   signinWithGoogle: async () => {},
   authFetch: async () => ({ data: {} }) as AxiosResponse,
@@ -186,6 +188,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
+  const signup = async (username: string, email: string, password: string) => {
+    const { data } = await api.post("/auth/signup", {
+      username,
+      email,
+      password,
+    });
+    await persistAuth(
+      data.data.accessToken,
+      data.data.refreshToken,
+      data.data.user,
+    );
+  };
+
   const signinWithGoogle = async () => {
     try {
       await GoogleSignin.hasPlayServices();
@@ -224,6 +239,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token,
         user,
         signin,
+        signup,
         signout,
         signinWithGoogle,
         authFetch,

@@ -1,0 +1,60 @@
+{
+  "auth": {
+    "signIn": "Sign In",
+    "signUp": "Sign Up",
+    "createAccount": "Create Account",
+    "title": {
+      "signIn": "Sign in",
+      "signUp": "Create account"
+    },
+    "subtitle": {
+      "signIn": "Welcome back",
+      "signUp": "Join us today"
+    },
+    "google": "Continue with Google",
+    "divider": "or",
+    "fields": {
+      "username": "Username",
+      "email": "Email",
+      "password": "Password"
+    },
+    "errors": {
+      "generic": "Error"
+    }
+  },
+  "navbar": {
+    "generate": "Generate",
+    "profile": "Profile"
+  },
+  "profile": {
+    "profile-title": "Profile",
+    "your-routes": "My trails",
+    "sign-out": "Sign out",
+    "edit-profile": "Edit Profile",
+    "change-photo": "Change Photo",
+    "username": "Username",
+    "username-placeholder": "Your username",
+    "bio": "Bio",
+    "bio-placeholder": "Tell us about yourself",
+    "save-changes": "Save Changes"
+  },
+  "social": {
+    "followers": "Followers",
+    "following": "Following",
+    "requests": "Requests",
+    "find-people": "Find People",
+    "search-placeholder": "Search by username…",
+    "no-results": "No users found",
+    "follow": "Follow",
+    "following-btn": "Following",
+    "requested": "Requested",
+    "unfollow": "Unfollow",
+    "remove": "Remove",
+    "accept": "Accept",
+    "reject": "Reject",
+    "no-followers": "No followers yet",
+    "no-following": "Not following anyone",
+    "no-requests": "No pending requests",
+    "private": "Private"
+  }
+}

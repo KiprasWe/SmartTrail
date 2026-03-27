@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:\\\\Users\\\\kipra\\\\Desktop\\\\SmartTrail\\\\app\\\\smart-trail\" && rm -f components/profile/account-card.tsx components/profile/profile-hero.tsx components/themed-text.tsx components/themed-view.tsx && echo \"deleted\")",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "Bash(npm install:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(npm uninstall:*)",
+      "Bash(\"C:\\\\Users\\\\kipra\\\\Desktop\\\\SmartTrail\\\\backend\\\\src\\\\controllers\\\\routesController.js\")",
+      "Bash(find C:UserskipraDesktopSmartTrailappsmart-trail -name *.tsx -path *components* -type f)",
+      "Bash(npx expo:*)",
+      "Bash(npx tsc:*)",
+      "Bash(node -e \"const fs = require\\(''./node_modules/expo-file-system/build/index.js''\\); console.log\\(Object.keys\\(fs\\).filter\\(k => k.toLowerCase\\(\\).includes\\(''cache''\\) || k.includes\\(''Encoding''\\) || k.includes\\(''write''\\) || k.includes\\(''Write''\\)\\)\\)\")",
+      "WebFetch(domain:developers.google.com)"
+    ]
+  }
+}

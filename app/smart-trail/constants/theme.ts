@@ -1,68 +1,45 @@
 import { Platform } from "react-native";
 
-// ── Palette ───────────────────────────────────────────────────────
-export const Palette = {
-  forestDeep:  "#0C1A0C",
-  forestDark:  "#1B2E1B",
-  forest:      "#2D6A2F",
-  forestMid:   "#3D7A40",
-  forestLight: "#4A8C4E",
-  sage:        "#7A9E7E",
-
-  earthNight: "#0E0B07",
-  earthDark:  "#1A1510",
-  earth:      "#2A2018",
-
-  parchment:  "#F2EAD3",
-  cream:      "#F0EBE1",
-  stoneWarm:  "#C4B99A",
-  stoneMid:   "#8A7D6A",
-  stoneDark:  "#6B5E50",
-} as const;
-
-// ── Interface tokens ──────────────────────────────────────────────
 export const Colors = {
   light: {
-    text:            "#1A1510",
-    background:      Palette.cream,
-    surface:         Palette.parchment,
-    tint:            Palette.forest,
-    icon:            Palette.stoneDark,
-    tabIconDefault:  Palette.stoneMid,
-    tabIconSelected: Palette.forest,
-    card:            "#FFFFFF",
-    border:          "#DDD5C8",
-    muted:           Palette.stoneDark,
+    bg: "#FFFFFF",
+    surface: "#F4F4F5",
+    text: "#09090B",
+    muted: "#71717A",
+    tint: "#16A34A",
+    border: "#E4E4E7",
+    danger: "#DC2626",
+    // tab bar compat
+    background: "#FFFFFF",
+    icon: "#71717A",
+    tabIconDefault: "#71717A",
+    tabIconSelected: "#16A34A",
   },
   dark: {
-    text:            Palette.parchment,
-    background:      Palette.earthDark,
-    surface:         Palette.earth,
-    tint:            Palette.forestLight,
-    icon:            Palette.stoneMid,
-    tabIconDefault:  "#6B6560",
-    tabIconSelected: Palette.forestLight,
-    card:            "#262018",
-    border:          "#3A3020",
-    muted:           "#9A8E7A",
+    bg: "#09090B",
+    surface: "#18181B",
+    text: "#FAFAFA",
+    muted: "#A1A1AA",
+    tint: "#4ADE80",
+    border: "#27272A",
+    danger: "#F87171",
+    // tab bar compat
+    background: "#09090B",
+    icon: "#A1A1AA",
+    tabIconDefault: "#A1A1AA",
+    tabIconSelected: "#4ADE80",
   },
-} as const;
+};
 
-// ── Typography ────────────────────────────────────────────────────
 export const Fonts = Platform.select({
   ios: {
-    serif: "Georgia",
-    mono:  "Courier New",
-    sans:  "System",
+    sans: "system-ui",
+    serif: "ui-serif",
+    mono: "ui-monospace",
   },
   default: {
+    sans: "normal",
     serif: "serif",
-    mono:  "monospace",
-    sans:  "normal",
+    mono: "monospace",
   },
-  web: {
-    serif: "Georgia, 'Times New Roman', serif",
-    mono:  "'Courier New', Courier, monospace",
-    sans:  "system-ui, -apple-system, sans-serif",
-  },
-})!;
+});

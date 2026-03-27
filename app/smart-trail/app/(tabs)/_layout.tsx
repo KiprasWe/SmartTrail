@@ -1,64 +1,43 @@
 import { Tabs } from "expo-router";
-import { Platform, StyleSheet } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useColorScheme } from "react-native";
+import { Colors } from "@/constants/theme";
 import { HapticTab } from "@/components/haptic-tab";
-import { IconSymbol } from "@/components/ui/icon-symbol";
-import { Colors, Palette } from "@/constants/theme";
-import { useColorScheme } from "@/hooks/theme/use-color-scheme";
+import { useTranslation } from "@/hooks/use-translation";
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme() ?? "light";
-  const isDark = colorScheme === "dark";
-  const insets = useSafeAreaInsets();
-
-  const tabBarHeight = 56;
-  const bottomPadding = Math.max(insets.bottom, 8);
+  const scheme = useColorScheme() ?? "light";
+  const ts = Colors[scheme];
+  const { t } = useTranslation();
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarButton: HapticTab,
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        tabBarInactiveTintColor: Colors[colorScheme].tabIconDefault,
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: "700",
-          letterSpacing: 1.2,
-          textTransform: "uppercase",
-        },
+        tabBarActiveTintColor: ts.tint,
+        tabBarInactiveTintColor: ts.tabIconDefault,
         tabBarStyle: {
-          backgroundColor: isDark ? Palette.earthDark : "#FAFAF7",
-          borderTopColor: isDark ? "#3A3020" : "#E5DDD0",
-          borderTopWidth: StyleSheet.hairlineWidth,
-          height: tabBarHeight + bottomPadding,
-          paddingBottom: bottomPadding,
-          paddingTop: 8,
-        },
-        tabBarIconStyle: {
-          marginBottom: 2,
+          backgroundColor: ts.bg,
+          borderTopColor: ts.border,
         },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: "Generate",
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={24} name="map.fill" color={color} />
+          title: t("navbar.generate"),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="map-outline" size={size} color={color} />
           ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: "Profile",
-          tabBarIcon: ({ color }) => (
-            <IconSymbol
-              size={24}
-              name="person.crop.circle.fill"
-              color={color}
-            />
+          title: t("navbar.profile"),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person-outline" size={size} color={color} />
           ),
         }}
       />

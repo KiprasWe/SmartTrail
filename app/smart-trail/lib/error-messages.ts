@@ -1,4 +1,17 @@
 // lib/errorMessages.ts
+
+/** Extract a human-readable message from an unknown catch value. */
+export function getErrMessage(err: unknown, fallback = "Unknown error"): string {
+  if (typeof err !== "object" || err === null) return fallback;
+  // Axios-style: err.response.data.code (our API error codes)
+  const axiosCode = (err as { response?: { data?: { code?: string } } }).response?.data?.code;
+  if (typeof axiosCode === "string") return axiosCode;
+  // Standard Error
+  const msg = (err as { message?: string }).message;
+  if (typeof msg === "string") return msg;
+  return fallback;
+}
+
 export const errorMessages: Record<string, Record<string, string>> = {
   en: {
     USER_EMAIL_EXISTS: "An account with this email already exists.",

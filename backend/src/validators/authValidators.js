@@ -4,7 +4,7 @@ export const signupSchema = z
   .object({
     username: z.string().min(3).max(30),
     email: z.email(),
-    password: z.string().min(6).regex(/\d/, "Password must contain a number"),
+    password: z.string().min(8).regex(/\d/, "Password must contain a number"),
     passwordConfirm: z.string(),
   })
   .refine((d) => d.password === d.passwordConfirm, {

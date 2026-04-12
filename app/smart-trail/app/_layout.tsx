@@ -9,9 +9,13 @@ import "../global.css";
 import "react-native-reanimated";
 
 import { useColorScheme } from "@/hooks/theme/use-color-scheme";
-import { AuthProvider, useAuth } from "@/context/auth-context";
+import { useAuthStore } from "@/store/use-auth-store";
+import { useProfileStore } from "@/store/use-profile-store";
+import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
 import { View, ActivityIndicator } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { useEffect } from "react";
+import { ErrorBoundary } from "@/components/error-boundary";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -19,7 +23,21 @@ export const unstable_settings = {
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, bootstrap: bootstrapAuth } = useAuthStore();
+  const hasOnboarded = user?.hasOnboarded ?? false;
+  const { bootstrap: bootstrapProfile } = useProfileStore();
+
+  useEffect(() => {
+    bootstrapAuth().then(() => {
+      // only fetch profile once we know we're logged in
+      const { user } = useAuthStore.getState();
+      if (user) {
+        bootstrapProfile();
+        // Hydrate saved-route list from disk before Profile is opened (same pattern as profile cache).
+        useSavedRoutesStore.getState().bootstrap();
+      }
+    });
+  }, []);
 
   if (isLoading) {
     return (
@@ -32,26 +50,29 @@ function RootLayoutNav() {
   return (
     <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
       <Stack>
-        <Stack.Protected guard={!!user}>
+        <Stack.Protected guard={!!user && !hasOnboarded}>
+          <Stack.Screen
+            name="onboarding"
+            options={{ headerShown: false, animation: "fade" }}
+          />
+        </Stack.Protected>
+        <Stack.Protected guard={!!user && hasOnboarded}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="route-map" options={{ headerShown: false }} />
+          <Stack.Screen name="search-users" options={{ headerShown: false }} />
+          <Stack.Screen name="settings" options={{ headerShown: false }} />
+          <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
+          <Stack.Screen name="user-profile" options={{ headerShown: false }} />
+          <Stack.Screen name="follow-list" options={{ headerShown: false }} />
           <Stack.Screen
-            name="route-map"
-            options={{
-              headerShown: false,
-              presentation: "fullScreenModal",
-              animation: "slide_from_bottom",
-              gestureEnabled: true,
-            }}
+            name="follow-requests"
+            options={{ headerShown: false }}
           />
           <Stack.Screen
-            name="search-users"
-            options={{
-              headerShown: false,
-              presentation: "fullScreenModal",
-              animation: "slide_from_bottom",
-              gestureEnabled: true,
-            }}
+            name="change-password"
+            options={{ headerShown: false }}
           />
+          <Stack.Screen name="set-password" options={{ headerShown: false }} />
         </Stack.Protected>
         <Stack.Protected guard={!user}>
           <Stack.Screen
@@ -67,10 +88,10 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
+    <ErrorBoundary>
       <KeyboardProvider>
         <RootLayoutNav />
       </KeyboardProvider>
-    </AuthProvider>
+    </ErrorBoundary>
   );
 }

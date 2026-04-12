@@ -1,92 +1,99 @@
 // lib/gpx-export.ts
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
-import type { OrsRoute } from "@/store/route-store";
 
-function decodePolyline(encoded: string): [number, number][] {
-  const coords: [number, number][] = [];
-  let index = 0,
-    lat = 0,
-    lng = 0;
-  while (index < encoded.length) {
-    let shift = 0,
-      result = 0,
-      byte: number;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lat += result & 1 ? ~(result >> 1) : result >> 1;
-    shift = 0;
-    result = 0;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lng += result & 1 ? ~(result >> 1) : result >> 1;
-    coords.push([lng / 1e5, lat / 1e5]);
-  }
-  return coords;
+import { File, Paths } from "expo-file-system";
+import * as Sharing from "expo-sharing";
+
+type Coords = [number, number]; // [lng, lat]
+
+export interface GpxWaypoint {
+  name: string;
+  lat: number;
+  lng: number;
+  description?: string | null;
 }
 
-function buildGpx(
-  coords: [number, number][],
-  name: string,
-  description = "",
-): string {
-  const points = coords
-    .map(([lon, lat]) => `    <trkpt lat="${lat}" lon="${lon}"></trkpt>`)
+export interface GpxRouteInput {
+  title: string;
+  coordinates: Coords[];
+  startLat: number;
+  startLng: number;
+  waypoints?: GpxWaypoint[];
+}
+
+function escapeXml(str: string): string {
+  return str.replace(/[<>&'"]/g, (c) =>
+    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c] ?? c),
+  );
+}
+
+function buildGpx({ title, coordinates, startLat, startLng, waypoints }: GpxRouteInput): string {
+  const safeName = escapeXml(title);
+
+  const trkpts = coordinates
+    .map(([lng, lat]) => `    <trkpt lat="${lat.toFixed(7)}" lon="${lng.toFixed(7)}"/>`)
     .join("\n");
+
+  const wpts = (waypoints ?? [])
+    .map((w) => {
+      const wName = escapeXml(w.name);
+      const descEl = w.description
+        ? `\n    <desc>${escapeXml(w.description)}</desc>`
+        : "";
+      return `  <wpt lat="${w.lat.toFixed(7)}" lon="${w.lng.toFixed(7)}">\n    <name>${wName}</name>${descEl}\n  </wpt>`;
+    })
+    .join("\n");
+
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="SmartTrail" xmlns="http://www.topografix.com/GPX/1/1">
+<gpx version="1.1" creator="SmartTrail"
+  xmlns="http://www.topografix.com/GPX/1/1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
   <metadata>
-    <name>${escapeXml(name)}</name>
-    <desc>${escapeXml(description)}</desc>
+    <name>${safeName}</name>
   </metadata>
-  <trk>
-    <name>${escapeXml(name)}</name>
+  <wpt lat="${startLat.toFixed(7)}" lon="${startLng.toFixed(7)}">
+    <name>Start — ${safeName}</name>
+  </wpt>
+${wpts ? wpts + "\n" : ""}  <trk>
+    <name>${safeName}</name>
     <trkseg>
-${points}
+${trkpts}
     </trkseg>
   </trk>
 </gpx>`;
 }
 
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
+function safeFilename(title: string): string {
+  return title
+    .replace(/[^a-zA-Z0-9_\-\s]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 40) || "route";
 }
 
-export async function exportRouteAsGpx(
-  route: OrsRoute,
-  name: string,
-  description = "",
-): Promise<void> {
-  const coords =
-    typeof route.geometry === "string"
-      ? decodePolyline(route.geometry)
-      : ((route.geometry as any)?.coordinates ?? []);
+export async function shareGpx(input: GpxRouteInput): Promise<void> {
+  if (!input.coordinates || input.coordinates.length === 0) {
+    throw new Error("Route has no coordinates.");
+  }
 
-  const gpx = buildGpx(coords as [number, number][], name, description);
-  const filename = `SmartTrail-${name.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}-${Date.now()}.gpx`;
-  const path = (FileSystem.cacheDirectory ?? "") + filename;
+  const gpxContent = buildGpx(input);
+  const filename = `${safeFilename(input.title)}.gpx`;
 
-  await FileSystem.writeAsStringAsync(path, gpx, {
-    encoding: FileSystem.EncodingType.UTF8,
-  });
+  // SDK 54 / expo-file-system v19+ new API
+  const file = new File(Paths.cache, filename);
 
-  const canShare = await Sharing.isAvailableAsync();
-  if (!canShare) throw new Error("Sharing is not available on this device.");
+  // Delete any stale file from a previous export with the same name
+  if (file.exists) {
+    file.delete();
+  }
+  file.create();
+  file.write(gpxContent);
 
-  await Sharing.shareAsync(path, {
+  // isAvailableAsync returns false on some Android emulators but
+  // shareAsync itself still works — just attempt it regardless.
+  await Sharing.shareAsync(file.uri, {
     mimeType: "application/gpx+xml",
-    dialogTitle: "Export route as GPX",
-    UTI: "com.topografix.gpx",
+    dialogTitle: `Export "${input.title}"`,
+    UTI: "com.topografix.gpx", // iOS only, ignored on Android
   });
 }

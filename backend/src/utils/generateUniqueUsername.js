@@ -1,20 +1,22 @@
 import { prisma } from "../config/db.js";
 
 export const generateUniqueUsername = async (displayName) => {
-  const base = displayName
+  const base = (displayName ?? "user")
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[^a-z0-9]/g, "");
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 20) || "user";
 
-  let username = base;
-  let attempts = 0;
+  // Build a batch of candidates and check them all in one query instead of
+  // up to 10 sequential findUnique calls.
+  const candidates = [base, ...Array.from({ length: 9 }, (_, i) => `${base}${i + 1}`)];
 
-  while (attempts < 10) {
-    const exists = await prisma.user.findUnique({ where: { username } });
-    if (!exists) return username;
-    username = `${base}${Math.floor(Math.random() * 9000) + 1000}`;
-    attempts++;
-  }
+  const taken = await prisma.user.findMany({
+    where: { username: { in: candidates } },
+    select: { username: true },
+  });
+  const takenSet = new Set(taken.map((u) => u.username));
 
-  return `${base}${Date.now()}`;
+  const free = candidates.find((c) => !takenSet.has(c));
+  return free ?? `${base}${Date.now()}`;
 };

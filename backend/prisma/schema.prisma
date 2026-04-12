@@ -10,7 +10,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  
+
 }
 
 model User {
@@ -20,10 +20,13 @@ model User {
   bio String?
   email String @unique
   isPublic Boolean @default(true)
+  hasOnboarded Boolean @default(false)
   password String?
 
   oAuthAccounts OAuthAccount[]
   refreshTokens RefreshToken[]
+  routes        Route[]
+  routeSaves    RouteSave[]
 
   followers Follow[] @relation("Following")
   following Follow[] @relation("Followers")
@@ -52,6 +55,8 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 model Follow {
@@ -67,6 +72,83 @@ model Follow {
   createdAt DateTime @default(now())
 
   @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@index([followingId, status])
+}
+
+model Route {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title        String
+  description  String?
+  mode         RouteMode
+  transport    String
+
+  distance     Int
+  duration     Int
+  ascent       Int?
+  descent      Int?
+  geometry     Json
+  bbox         Json
+  instructions Json?
+  elevationProfile Json?
+
+  startLat     Float
+  startLng     Float
+  startLabel   String?
+  endLat       Float?
+  endLng       Float?
+  endLabel     String?
+
+  aiPlan       Json?
+  pois         Json?
+
+  variantLabel   String?
+  generationId   String?
+
+  isFavorite   Boolean  @default(false)
+  isPublic     Boolean  @default(false)
+
+  // Denormalized count of RouteSave rows — bumped/decremented in the same
+  // transaction as save/unsave. Used as the popularity signal on discover.
+  saveCount    Int      @default(0)
+
+  saves        RouteSave[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([generationId])
+  // Bounding-box prefilter for discover: Postgres can use this to narrow down
+  // by isPublic + start coordinates before the haversine pass runs.
+  @@index([isPublic, startLat, startLng])
+  @@index([isPublic, saveCount])
+}
+
+// Join table: user A "saves" another user's public route to their own
+// discover list. saveCount on Route is kept in sync via transaction.
+model RouteSave {
+  id        String   @id @default(uuid())
+  userId    String
+  routeId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, routeId])
+  @@index([routeId])
+  @@index([userId])
+}
+
+enum RouteMode {
+  A_TO_B
+  LOOP
+  AI
 }
 
 enum FollowStatus {

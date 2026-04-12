@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,49 +7,70 @@ import {
   ScrollView,
   StatusBar,
   StyleSheet,
-  Platform,
   ActivityIndicator,
-  Alert,
   useColorScheme,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
-import { useAuth } from "@/context/auth-context";
+import { useAuthStore } from "@/store/use-auth-store";
+import { useProfileStore } from "@/store/use-profile-store";
+import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
 import { Ionicons } from "@expo/vector-icons";
-import { useUserProfile, type EditForm } from "@/hooks/use-user-profile";
 import { useSocial } from "@/hooks/use-social";
-import { EditProfileSheet } from "@/components/profile/edit-profile-sheet";
-import { FollowListSheet } from "@/components/social/follow-list-sheet";
-import { FollowRequestsSheet } from "@/components/social/follow-requests-sheet";
 import { Colors } from "@/constants/theme";
 import { useTranslation } from "@/hooks/use-translation";
+import type { SavedRouteListItem } from "@/types/route";
+import { RoutePreview } from "@/components/saved-routes/route-preview";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  TabScreenHeader,
+  mainTabHeaderIconHitStyle,
+} from "@/components/ui/tab-screen-header";
+
+const socialStatsStorageKey = (userId: string) =>
+  `smarttrail_social_stats_${userId}`;
 
 const AVATAR_PLACEHOLDER = (name: string) =>
   `https://ui-avatars.com/api/?background=16A34A&color=fff&size=256&bold=true&name=${encodeURIComponent(name)}`;
 
+const formatDistance = (metres: number) =>
+  metres < 1000
+    ? `${Math.round(metres)} m`
+    : `${(metres / 1000).toFixed(1)} km`;
+
+const formatDuration = (seconds: number) => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m} min`;
+};
+
+const TRANSPORT_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
+  "foot-walking": "walk-outline",
+  "foot-hiking": "trail-sign-outline",
+  running: "walk-outline",
+  "cycling-regular": "bicycle-outline",
+  "cycling-road": "bicycle-outline",
+  "cycling-mountain": "bicycle-outline",
+  "cycling-electric": "bicycle-outline",
+};
+
 export default function ProfileScreen() {
-  const { signout, authFetch } = useAuth();
+  const { authFetch } = useAuthStore();
+  const authUserId = useAuthStore((s) => s.user?.id);
+  const { profile, loading, error, fetchProfile } = useProfileStore();
   const scheme = useColorScheme() ?? "light";
   const isDark = scheme === "dark";
   const ts = Colors[scheme];
   const { t } = useTranslation();
   const router = useRouter();
 
-  const { profile, loading, error, fetchProfile, updateProfile, setProfile } =
-    useUserProfile(authFetch);
-  const { getFollowers, getFollowing, getFollowRequests } = useSocial(authFetch);
+  const { getFollowers, getFollowing, getFollowRequests } =
+    useSocial(authFetch);
 
-  const [editVisible, setEditVisible] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<EditForm>({
-    username: "",
-    bio: "",
-    profilePicture: "",
-  });
-
-  const [followersVisible, setFollowersVisible] = useState(false);
-  const [followingVisible, setFollowingVisible] = useState(false);
-  const [requestsVisible, setRequestsVisible] = useState(false);
+  const savedRoutes = useSavedRoutesStore((s) => s.routes);
+  const savedRoutesLoading = useSavedRoutesStore((s) => s.loading);
+  const bootstrapSavedRoutes = useSavedRoutesStore((s) => s.bootstrap);
+  const refreshSavedRoutes = useSavedRoutesStore((s) => s.refresh);
 
   const [socialStats, setSocialStats] = useState({
     followers: 0,
@@ -57,75 +78,115 @@ export default function ProfileScreen() {
     requests: 0,
   });
 
+  // Show last-known follower counts immediately (network refresh runs on focus).
+  useEffect(() => {
+    if (!authUserId) return;
+    let cancelled = false;
+    AsyncStorage.getItem(socialStatsStorageKey(authUserId)).then((raw) => {
+      if (cancelled || !raw) return;
+      try {
+        const parsed = JSON.parse(raw) as {
+          followers?: unknown;
+          following?: unknown;
+          requests?: unknown;
+        };
+        if (
+          typeof parsed.followers === "number" &&
+          typeof parsed.following === "number" &&
+          typeof parsed.requests === "number"
+        ) {
+          setSocialStats({
+            followers: parsed.followers,
+            following: parsed.following,
+            requests: parsed.requests,
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authUserId]);
+
   const fetchStats = useCallback(() => {
-    if (!profile?.id) return;
+    const uid = authUserId ?? profile?.id;
+    if (!uid) return;
+    let cancelled = false;
     Promise.all([
-      getFollowers(profile.id),
-      getFollowing(profile.id),
+      getFollowers(uid),
+      getFollowing(uid),
       getFollowRequests(),
     ])
       .then(([followers, following, requests]) => {
-        setSocialStats({
+        if (cancelled) return;
+        const next = {
           followers: followers.length,
           following: following.length,
           requests: requests.length,
-        });
+        };
+        setSocialStats(next);
+        AsyncStorage.setItem(
+          socialStatsStorageKey(uid),
+          JSON.stringify(next),
+        ).catch(() => {});
       })
       .catch(() => {});
-  }, [profile?.id, getFollowers, getFollowing, getFollowRequests]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authUserId,
+    profile?.id,
+    getFollowers,
+    getFollowing,
+    getFollowRequests,
+  ]);
 
-  useFocusEffect(fetchStats);
-
-  const openEdit = () => {
-    setForm({
-      username: profile?.username ?? "",
-      bio: profile?.bio ?? "",
-      profilePicture: profile?.profilePicture ?? "",
-    });
-    setEditVisible(true);
-  };
-
-  const handleSave = async () => {
-    if (!form.username.trim()) {
-      Alert.alert("Error", "Username cannot be empty.");
-      return;
-    }
-    setSaving(true);
-    try {
-      const patch: Partial<EditForm> = {};
-      if (form.username !== profile?.username)
-        patch.username = form.username.trim();
-      if (form.bio !== (profile?.bio ?? "")) patch.bio = form.bio;
-      if (form.profilePicture !== (profile?.profilePicture ?? ""))
-        patch.profilePicture = form.profilePicture;
-
-      if (Object.keys(patch).length > 0) {
-        const updated = await updateProfile(patch);
-        setProfile(updated);
+  useFocusEffect(
+    useCallback(() => {
+      fetchProfile();
+      fetchStats();
+      // First visit hydrates from AsyncStorage + background refresh;
+      // subsequent focuses just re-fetch from the server.
+      if (savedRoutes.length === 0) {
+        bootstrapSavedRoutes();
+      } else {
+        refreshSavedRoutes().catch(() => {});
       }
-      setEditVisible(false);
-    } catch (err: any) {
-      Alert.alert("Error", err.message ?? "Failed to save.");
-    } finally {
-      setSaving(false);
-    }
-  };
+    }, [
+      fetchProfile,
+      fetchStats,
+      bootstrapSavedRoutes,
+      refreshSavedRoutes,
+      savedRoutes.length,
+    ]),
+  );
 
   if (loading && !profile) {
     return (
-      <View style={[styles.centered, { backgroundColor: ts.bg }]}>
-        <ActivityIndicator color={ts.tint} />
+      <View style={[styles.root, { backgroundColor: ts.bg }]}>
+        <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+        <TabScreenHeader title={t("profile.profile-title")} />
+        <View style={styles.centeredFill}>
+          <ActivityIndicator color={ts.tint} />
+        </View>
       </View>
     );
   }
 
   if (error && !profile) {
     return (
-      <View style={[styles.centered, { backgroundColor: ts.bg }]}>
-        <Text style={[styles.errorText, { color: ts.muted }]}>{error}</Text>
-        <TouchableOpacity onPress={fetchProfile}>
-          <Text style={[styles.retryText, { color: ts.tint }]}>Try again</Text>
-        </TouchableOpacity>
+      <View style={[styles.root, { backgroundColor: ts.bg }]}>
+        <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+        <TabScreenHeader title={t("profile.profile-title")} />
+        <View style={[styles.centeredFill, { gap: 12 }]}>
+          <Text style={[styles.errorText, { color: ts.muted }]}>{error}</Text>
+          <TouchableOpacity onPress={fetchProfile}>
+            <Text style={[styles.retryText, { color: ts.tint }]}>{t("profile.try-again")}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -137,42 +198,51 @@ export default function ProfileScreen() {
     <View style={[styles.root, { backgroundColor: ts.bg }]}>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={[styles.pageTitle, { color: ts.text }]}>
-            {t("profile.profile-title")}
-          </Text>
+      <TabScreenHeader
+        title={t("profile.profile-title")}
+        right={
           <View style={styles.headerBtns}>
             <TouchableOpacity
               onPress={() => router.push("/search-users")}
               style={[
-                styles.iconBtn,
+                mainTabHeaderIconHitStyle.base,
                 { backgroundColor: ts.surface, borderColor: ts.border },
               ]}
             >
               <Ionicons name="search-outline" size={16} color={ts.muted} />
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={openEdit}
+              onPress={() => router.push("/edit-profile")}
               style={[
-                styles.iconBtn,
+                mainTabHeaderIconHitStyle.base,
                 { backgroundColor: ts.surface, borderColor: ts.border },
               ]}
             >
               <Ionicons name="pencil-outline" size={16} color={ts.muted} />
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => router.push("/settings")}
+              style={[
+                mainTabHeaderIconHitStyle.base,
+                { backgroundColor: ts.surface, borderColor: ts.border },
+              ]}
+            >
+              <Ionicons name="settings-outline" size={16} color={ts.muted} />
+            </TouchableOpacity>
           </View>
-        </View>
+        }
+      />
 
+      <ScrollView
+        style={styles.scrollFlex}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+      >
         {/* Avatar + info */}
         <View style={styles.profileSection}>
           <Image
             source={{ uri: avatarUri }}
-            style={[styles.avatar, { borderColor: ts.border }]}
+            style={[styles.avatar, { borderColor: ts.border, backgroundColor: ts.surface }]}
           />
           <Text style={[styles.username, { color: ts.text }]}>
             {profile?.username ?? "—"}
@@ -194,14 +264,20 @@ export default function ProfileScreen() {
         >
           <TouchableOpacity
             style={styles.statItem}
-            onPress={() => setFollowersVisible(true)}
+            onPress={() => {
+              if (!profile?.id) return;
+              router.push({
+                pathname: "/follow-list",
+                params: { type: "followers", userId: profile.id },
+              });
+            }}
             activeOpacity={0.7}
           >
             <Text style={[styles.statCount, { color: ts.text }]}>
               {socialStats.followers}
             </Text>
             <Text style={[styles.statLabel, { color: ts.muted }]}>
-              Followers
+              {t("social.followers")}
             </Text>
           </TouchableOpacity>
 
@@ -209,14 +285,20 @@ export default function ProfileScreen() {
 
           <TouchableOpacity
             style={styles.statItem}
-            onPress={() => setFollowingVisible(true)}
+            onPress={() => {
+              if (!profile?.id) return;
+              router.push({
+                pathname: "/follow-list",
+                params: { type: "following", userId: profile.id },
+              });
+            }}
             activeOpacity={0.7}
           >
             <Text style={[styles.statCount, { color: ts.text }]}>
               {socialStats.following}
             </Text>
             <Text style={[styles.statLabel, { color: ts.muted }]}>
-              Following
+              {t("social.following")}
             </Text>
           </TouchableOpacity>
 
@@ -227,7 +309,7 @@ export default function ProfileScreen() {
               />
               <TouchableOpacity
                 style={styles.statItem}
-                onPress={() => setRequestsVisible(true)}
+                onPress={() => router.push("/follow-requests")}
                 activeOpacity={0.7}
               >
                 <View style={styles.requestsRow}>
@@ -239,92 +321,117 @@ export default function ProfileScreen() {
                   />
                 </View>
                 <Text style={[styles.statLabel, { color: ts.muted }]}>
-                  Requests
+                  {t("social.requests")}
                 </Text>
               </TouchableOpacity>
             </>
           )}
         </View>
 
-        {/* Sign out */}
-        <TouchableOpacity
-          onPress={signout}
-          style={[styles.signOut, { borderColor: ts.border }]}
-        >
-          <Text style={[styles.signOutText, { color: ts.danger }]}>
-            {t("profile.sign-out")}
+        {/* Saved routes */}
+        <View style={styles.savedSection}>
+          <Text style={[styles.sectionTitle, { color: ts.text }]}>
+            {t("profile.saved-routes")}
           </Text>
-        </TouchableOpacity>
+
+          {savedRoutesLoading && savedRoutes.length === 0 ? (
+            <View style={styles.savedEmpty}>
+              <ActivityIndicator color={ts.tint} />
+            </View>
+          ) : savedRoutes.length === 0 ? (
+            <View
+              style={[
+                styles.savedEmpty,
+                { borderColor: ts.border, backgroundColor: ts.surface },
+              ]}
+            >
+              <Ionicons name="bookmark-outline" size={28} color={ts.muted} />
+              <Text style={[styles.savedEmptyText, { color: ts.muted }]}>
+                {t("profile.no-saved-routes")}
+              </Text>
+              <Text style={[styles.savedEmptyHint, { color: ts.muted }]}>
+                {t("profile.no-saved-routes-hint")}
+              </Text>
+            </View>
+          ) : (
+            <View style={{ gap: 10 }}>
+              {savedRoutes.map((r: SavedRouteListItem) => {
+                const icon = TRANSPORT_ICON[r.transport] ?? "map-outline";
+                return (
+                  <TouchableOpacity
+                    key={r.id}
+                    activeOpacity={0.8}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/route-map",
+                        params: { savedId: r.id },
+                      })
+                    }
+                    style={[
+                      styles.savedCard,
+                      { backgroundColor: ts.surface, borderColor: ts.border },
+                    ]}
+                  >
+                    <RoutePreview
+                      coords={r.thumbnail}
+                      bbox={r.bbox}
+                      width={64}
+                      height={52}
+                      color={ts.tint}
+                      backgroundColor={ts.bg}
+                    />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text
+                        style={[styles.savedCardTitle, { color: ts.text }]}
+                        numberOfLines={1}
+                      >
+                        {r.title}
+                      </Text>
+                      <View style={styles.savedCardMetaRow}>
+                        <Ionicons name={icon} size={12} color={ts.muted} />
+                        <Text
+                          style={[styles.savedCardMeta, { color: ts.muted }]}
+                          numberOfLines={1}
+                        >
+                          {formatDistance(r.distance)} ·{" "}
+                          {formatDuration(r.duration)}
+                          {r.ascent != null ? ` · ↑${r.ascent} m` : ""}
+                        </Text>
+                      </View>
+                    </View>
+                    {r.isFavorite && (
+                      <Ionicons name="star" size={16} color={ts.tint} />
+                    )}
+                    <Ionicons
+                      name="chevron-forward"
+                      size={18}
+                      color={ts.muted}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        </View>
       </ScrollView>
 
-      <EditProfileSheet
-        visible={editVisible}
-        saving={saving}
-        form={form}
-        onChangeForm={setForm}
-        onSave={handleSave}
-        onClose={() => setEditVisible(false)}
-        isDark={isDark}
-      />
-
-      <FollowListSheet
-        visible={followersVisible}
-        type="followers"
-        userId={profile?.id ?? ""}
-        onClose={() => setFollowersVisible(false)}
-        onDone={fetchStats}
-        isDark={isDark}
-        authFetch={authFetch}
-      />
-
-      <FollowListSheet
-        visible={followingVisible}
-        type="following"
-        userId={profile?.id ?? ""}
-        onClose={() => setFollowingVisible(false)}
-        onDone={fetchStats}
-        isDark={isDark}
-        authFetch={authFetch}
-      />
-
-      <FollowRequestsSheet
-        visible={requestsVisible}
-        onClose={() => setRequestsVisible(false)}
-        onDone={fetchStats}
-        isDark={isDark}
-        authFetch={authFetch}
-      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  scrollFlex: { flex: 1 },
   scroll: { paddingBottom: 48 },
-  centered: {
+  centeredFill: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: 12,
   },
   errorText: { fontSize: 14 },
   retryText: { fontSize: 14, fontWeight: "600" },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === "ios" ? 60 : 44,
-    paddingBottom: 12,
-  },
-  pageTitle: { fontSize: 24, fontWeight: "700", letterSpacing: -0.3 },
   headerBtns: { flexDirection: "row", gap: 8 },
-  iconBtn: {
-    padding: 9,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
 
   profileSection: {
     alignItems: "center",
@@ -338,7 +445,6 @@ const styles = StyleSheet.create({
     borderRadius: 44,
     borderWidth: 1,
     marginBottom: 12,
-    backgroundColor: "#D4D4D8",
   },
   username: { fontSize: 20, fontWeight: "700", letterSpacing: -0.2 },
   email: { fontSize: 14 },
@@ -368,13 +474,42 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  signOut: {
-    marginHorizontal: 20,
-    marginTop: 8,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    alignItems: "center",
+  // Saved routes section
+  savedSection: {
+    paddingHorizontal: 20,
+    gap: 12,
   },
-  signOutText: { fontSize: 14, fontWeight: "600" },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    letterSpacing: -0.2,
+  },
+  savedEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: 6,
+  },
+  savedEmptyText: { fontSize: 14, fontWeight: "600", marginTop: 4 },
+  savedEmptyHint: { fontSize: 12, textAlign: "center" },
+  savedCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  savedCardTitle: { fontSize: 14, fontWeight: "700", letterSpacing: -0.1 },
+  savedCardMeta: { fontSize: 12, flexShrink: 1 },
+  savedCardMetaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 3,
+  },
 });

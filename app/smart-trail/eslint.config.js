@@ -7,4 +7,11 @@ module.exports = defineConfig([
   {
     ignores: ['dist/*'],
   },
+  {
+    rules: {
+      // Disallow console.log in production-shipped code; warn/error are OK for
+      // deliberate diagnostics that should be reviewed before shipping.
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
+    },
+  },
 ]);

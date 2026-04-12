@@ -26,7 +26,7 @@ export type UserProfile = {
 };
 
 export type FollowRequest = {
-  id: string; // follower's userId
+  id: string;
   username: string;
   profilePicture?: string | null;
   requestId: string;
@@ -40,7 +40,8 @@ export function useSocial(authFetch: AuthFetch | null | undefined) {
       const { data } = await authFetch(
         `/social/search/${encodeURIComponent(username.trim())}`,
       );
-      return data.data.users ?? [];
+      if (data?.status !== "success" || !data.data) return [];
+      return (data.data.users ?? []) as SocialUser[];
     },
     [authFetch],
   );
@@ -118,8 +119,11 @@ export function useSocial(authFetch: AuthFetch | null | undefined) {
   const getUserProfile = useCallback(
     async (userId: string): Promise<UserProfile> => {
       if (!authFetch) throw new Error("Not authenticated");
-      const { data } = await authFetch(`/social/profile/${userId}`);
-      return data.data.profile;
+      const { data } = await authFetch(`/social/profile/${encodeURIComponent(userId)}`);
+      if (data?.status !== "success" || !data.data?.profile) {
+        throw new Error("Profile unavailable");
+      }
+      return data.data.profile as UserProfile;
     },
     [authFetch],
   );

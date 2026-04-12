@@ -62,7 +62,7 @@
       "expo-web-browser",
       "@maplibre/maplibre-react-native",
       "@react-native-google-signin/google-signin",
-      "expo-localization",
+      "expo-localization"
     ],
     "experiments": {
       "typedRoutes": true,

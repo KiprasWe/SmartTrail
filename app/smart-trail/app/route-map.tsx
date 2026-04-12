@@ -1,1081 +1,1365 @@
-// @refresh reset
-// app/route-map.tsx
+import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import {
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
   ScrollView,
+  StyleSheet,
+  Platform,
+  PermissionsAndroid,
+  useColorScheme,
+  StatusBar,
+  Animated,
+  ActivityIndicator,
+  Alert,
   Image,
   Linking,
-  useColorScheme,
-  Dimensions,
-  Alert,
-  ActivityIndicator,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Switch,
 } from "react-native";
-import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 import {
   MapView,
   Camera,
-  UserLocation,
   ShapeSource,
   LineLayer,
-  PointAnnotation,
+  CircleLayer,
+  UserLocation,
+  setAccessToken,
   type CameraRef,
 } from "@maplibre/maplibre-react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/theme";
-import { routeStore, type RoutePayload } from "@/store/route-store";
-import { savedRoutesStore } from "@/store/saved-routes-store";
-import { exportRouteAsGpx } from "@/lib/gpx-export";
+import { useAuthStore } from "@/store/use-auth-store";
+import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
+import { useWeatherStore } from "@/store/use-weather-store";
+import { sampleRoutePoints } from "@/lib/weather";
+import { WeatherCard } from "@/components/weather/weather-card";
+import type { WeatherSnapshot } from "@/types/weather";
+import i18n from "@/lib/i18n";
+import { useTranslation } from "@/hooks/use-translation";
+import type { RouteMode, SaveRouteInput } from "@/types/route";
+import { shareGpx } from "@/lib/gpx-export";
 
-const { width: SW } = Dimensions.get("window");
-const ACCENT = "#4f8ef7";
-const ROUTE_COLORS = ["#4f8ef7", "#ff9f0a", "#30d158"];
+setAccessToken(null);
 
-const osmStyle = (isDark: boolean): string =>
-  isDark
-    ? "https://tiles.openfreemap.org/styles/dark"
-    : "https://tiles.openfreemap.org/styles/liberty";
+const OSM_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+const ROUTE_COLORS = ["#16A34A", "#3B82F6", "#F59E0B"];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface EnrichedPOI {
-  name: string;
+type Coords = [number, number];
+
+interface GenParams {
+  mode: "a_to_b" | "loop" | "ai";
+  start: Coords;
+  end?: Coords;
+  distance?: number;
+  profile: string;
+  elevationPreference: string;
+  poiTypes: string[];
+  waypoints?: Coords[];
+}
+
+interface Poi {
+  type: "Feature";
+  geometry: { type: "Point"; coordinates: Coords };
+  properties: {
+    id: number;
+    name: string | null;
+    category: string | null;
+    distance_from_route: number;
+    // AI / Google Places enrichment (only present for AI mode)
+    place_id?: string | null;
+    ai_description?: string | null;
+    rating?: number | null;
+    user_rating_count?: number | null;
+    formatted_address?: string | null;
+    website_uri?: string | null;
+    google_maps_uri?: string | null;
+    editorial_summary?: string | null;
+    photo_name?: string | null;
+  };
+}
+
+interface RouteVariant {
+  label: string;
   description: string;
-  tip?: string;
-  rating?: number;
-  review_count?: number;
-  duration_minutes?: number;
-  photos?: string[];
-  is_open_now?: boolean | null;
-  opening_hours?: string[] | null;
-  website?: string | null;
-  editorial_summary?: string | null;
-  wikipedia_summary?: string | null;
-  wikipedia_url?: string | null;
-  enriched_by?: "google_places" | "wikipedia";
+  profile: string;
+  distance_km: number;
+  duration_s: number;
+  ascent_m: number;
+  descent_m: number;
+  geometry: { type: "LineString"; coordinates: Coords[] };
+  bbox: [number, number, number, number];
+  pois: Poi[];
+  overlap_ratio?: number;
+}
+
+interface Payload {
+  profile: string;
+  elevation_preference: string;
+  routes: RouteVariant[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function fmtDistance(m: number) {
-  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
-}
-function fmtDuration(s: number) {
-  const m = Math.round(s / 60);
-  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`;
+function formatDist(km: number) {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 }
 
-function decodePolyline(encoded: string): [number, number][] {
-  const coords: [number, number][] = [];
-  let index = 0,
-    lat = 0,
-    lng = 0;
-  while (index < encoded.length) {
-    let shift = 0,
-      result = 0,
-      byte: number;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lat += result & 1 ? ~(result >> 1) : result >> 1;
-    shift = 0;
-    result = 0;
-    do {
-      byte = encoded.charCodeAt(index++) - 63;
-      result |= (byte & 0x1f) << shift;
-      shift += 5;
-    } while (byte >= 0x20);
-    lng += result & 1 ? ~(result >> 1) : result >> 1;
-    coords.push([lng / 1e5, lat / 1e5]);
+function formatTime(s: number) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m} min`;
+}
+
+const CATEGORY_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+  // sustenance / food group
+  cafe: "cafe-outline",
+  coffee: "cafe-outline",
+  restaurant: "restaurant-outline",
+  bar: "wine-outline",
+  pub: "wine-outline",
+  "fast food": "fast-food-outline",
+  // natural group
+  natural: "leaf-outline",
+  park: "leaf-outline",
+  nature: "leaf-outline",
+  waterfall: "water-outline",
+  spring: "water-outline",
+  water: "water-outline",
+  beach: "sunny-outline",
+  peak: "triangle-outline",
+  cliff: "triangle-outline",
+  cave: "moon-outline",
+  // tourism group
+  tourism: "eye-outline",
+  viewpoint: "eye-outline",
+  attraction: "star-outline",
+  information: "information-circle-outline",
+  // historic group
+  historic: "flag-outline",
+  monument: "flag-outline",
+  memorial: "flag-outline",
+  castle: "business-outline",
+  ruins: "business-outline",
+  // arts & culture group
+  museum: "color-palette-outline",
+  gallery: "color-palette-outline",
+  theatre: "musical-notes-outline",
+  cinema: "film-outline",
+  // leisure group
+  leisure: "basketball-outline",
+  sports: "basketball-outline",
+  "sports centre": "basketball-outline",
+  "picnic site": "umbrella-outline",
+  playground: "happy-outline",
+  // facilities group
+  toilet: "body-outline",
+  bench: "body-outline",
+  drinking: "water-outline",
+};
+
+// Builds a URL pointing at our backend's Google Places photo proxy. The proxy
+// resolves the photoName to the actual image and 302-redirects, so RN's <Image>
+// just follows it transparently. The API key never touches the client.
+function placePhotoUrl(photoName: string, height = 400, width = 400) {
+  const base = process.env.EXPO_PUBLIC_API_URL;
+  return `${base}/places/photo?name=${encodeURIComponent(photoName)}&maxHeight=${height}&maxWidth=${width}`;
+}
+
+async function openExternal(url?: string | null) {
+  if (!url) return;
+  try {
+    const can = await Linking.canOpenURL(url);
+    if (can) await Linking.openURL(url);
+  } catch {
+    // ignore
   }
-  return coords;
 }
 
-function boundsFromCoords(coords: [number, number][]) {
-  const lngs = coords.map((c) => c[0]);
-  const lats = coords.map((c) => c[1]);
-  return {
-    ne: [Math.max(...lngs), Math.max(...lats)] as [number, number],
-    sw: [Math.min(...lngs), Math.min(...lats)] as [number, number],
-    center: [
-      (Math.min(...lngs) + Math.max(...lngs)) / 2,
-      (Math.min(...lats) + Math.max(...lats)) / 2,
-    ] as [number, number],
-  };
+function poiIcon(category: string | null): keyof typeof Ionicons.glyphMap {
+  if (!category) return "location-outline";
+  const lower = category.toLowerCase();
+  for (const [key, icon] of Object.entries(CATEGORY_ICONS)) {
+    if (lower.includes(key)) return icon;
+  }
+  return "location-outline";
 }
 
-function renderStars(rating: number) {
-  const full = Math.floor(rating);
-  const half = rating - full >= 0.5 ? 1 : 0;
-  const empty = 5 - full - half;
-  return "★".repeat(full) + (half ? "½" : "") + "☆".repeat(empty);
-}
-
-// ─── RouteMapScreen ───────────────────────────────────────────────────────────
+// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function RouteMapScreen() {
   const scheme = useColorScheme() ?? "light";
   const t = Colors[scheme];
-  const isDark = scheme === "dark";
-  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const cameraRef = useRef<CameraRef>(null);
-  const isFirstFit = useRef(true);
-  const { savedId } = useLocalSearchParams<{ savedId?: string }>();
-  const isSavedMode = !!savedId;
+  const isDark = scheme === "dark";
+  const { t: tr } = useTranslation();
 
-  const [savedPayload, setSavedPayload] = useState<RoutePayload | null>(null);
-  const [savedTitle, setSavedTitle] = useState<string>("");
-  const [loadingSaved, setLoadingSaved] = useState(isSavedMode);
-  const [selectedIdx, setSelectedIdx] = useState<number | undefined>(
-    isSavedMode ? undefined : 0,
+  const params = useLocalSearchParams<{
+    payload?: string;
+    genParams?: string;
+    savedId?: string;
+    publicId?: string;
+  }>();
+  const initialPayload = useMemo(
+    () => (params.payload ? (JSON.parse(params.payload) as Payload) : null),
+    [params.payload],
+  );
+  const genParams = useMemo(
+    () => (params.genParams ? (JSON.parse(params.genParams) as GenParams) : null),
+    [params.genParams],
+  );
+  // If opened from a saved-route card, resolve the payload asynchronously
+  // (cache-first, so it works offline)
+  const [payload, setPayload] = useState<Payload | null>(initialPayload);
+
+  const token = useAuthStore((s) => s.token);
+
+  const [routes, setRoutes] = useState<RouteVariant[]>(payload?.routes ?? []);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [waypoints, setWaypoints] = useState<Coords[]>([]);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [showPois, setShowPois] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [selectedPoi, setSelectedPoi] = useState<Poi | null>(null);
+
+  // Save-route modal
+  const saveRoute = useSavedRoutesStore((s) => s.save);
+  const getSavedById = useSavedRoutesStore((s) => s.getById);
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveTitle, setSaveTitle] = useState("");
+  const [saveDescription, setSaveDescription] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExportGpx = useCallback(async () => {
+    const route = routes[selectedIndex];
+    if (!route) return;
+    setIsExporting(true);
+    try {
+      const gpxWaypoints = (route.pois ?? [])
+        .filter((p) => p.properties.name)
+        .map((p) => ({
+          name: p.properties.name!,
+          lat: p.geometry.coordinates[1],
+          lng: p.geometry.coordinates[0],
+          description: p.properties.ai_description ?? p.properties.editorial_summary ?? p.properties.category ?? undefined,
+        }));
+
+      await shareGpx({
+        title: saveTitle || route.label || "SmartTrail Route",
+        coordinates: route.geometry.coordinates as [number, number][],
+        startLat: route.geometry.coordinates[0][1],
+        startLng: route.geometry.coordinates[0][0],
+        waypoints: gpxWaypoints.length > 0 ? gpxWaypoints : undefined,
+      });
+    } catch (err) {
+      console.error("[GPX export]", err);
+      Alert.alert(tr("route-map.export-gpx"), tr("route-map.export-gpx-error"));
+    } finally {
+      setIsExporting(false);
+    }
+  }, [routes, selectedIndex, saveTitle, tr]);
+
+  const handleNavigateToStart = useCallback(async () => {
+    const route = routes[selectedIndex];
+    if (!route) return;
+    const [startLng, startLat] = route.geometry.coordinates[0];
+    // Use geo: URI on Android (opens any navigation app via intent),
+    // maps: URI on iOS (opens Apple Maps; Google Maps also registers for it).
+    const url = Platform.OS === "android"
+      ? `geo:${startLat},${startLng}?q=${startLat},${startLng}`
+      : `maps://?daddr=${startLat},${startLng}`;
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        // Fallback: Google Maps universal web URL works on both platforms
+        await Linking.openURL(
+          `https://www.google.com/maps/dir/?api=1&destination=${startLat},${startLng}`,
+        );
+      }
+    } catch {
+      Alert.alert(tr("route-map.navigate-to-start"), tr("route-map.navigate-to-start-error"));
+    }
+  }, [routes, selectedIndex, tr]);
+
+  // Whether the user wants this route published to the Discover feed.
+  // Default false — sharing is explicit and opt-in per route.
+  const [saveIsPublic, setSaveIsPublic] = useState(false);
+  const [savedRouteId, setSavedRouteId] = useState<string | null>(
+    params.savedId ?? null,
+  );
+  const [loadingSaved, setLoadingSaved] = useState(
+    !!params.savedId || !!params.publicId,
+  );
+  // When viewing a public route from Discover, we're in read-only mode:
+  // the save button becomes "Save to my list" and the regenerate controls
+  // are hidden.
+  const [publicRouteMeta, setPublicRouteMeta] = useState<{
+    id: string;
+    authorUsername: string | null;
+  } | null>(null);
+
+  // Load a public community route by id (tap-through from Discover). Fetches
+  // /routes/public/:id and turns it into the single-variant Payload shape.
+  const authFetch = useAuthStore((s) => s.authFetch);
+  useEffect(() => {
+    if (!params.publicId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await authFetch(`/routes/public/${params.publicId}`);
+        if (cancelled) return;
+        const pub = data.data.route;
+        if (!pub) {
+          setLoadingSaved(false);
+          Alert.alert(tr("route-map.route-not-found"), tr("route-map.route-unavailable"));
+          return;
+        }
+        const variantShape: RouteVariant = {
+          label: pub.variantLabel ?? "public",
+          description: pub.description ?? "",
+          profile: pub.transport,
+          distance_km: pub.distance / 1000,
+          duration_s: pub.duration,
+          ascent_m: pub.ascent ?? 0,
+          descent_m: pub.descent ?? 0,
+          geometry: pub.geometry,
+          bbox: pub.bbox,
+          pois: Array.isArray(pub.pois) ? (pub.pois as Poi[]) : [],
+        };
+        setPayload({
+          profile: pub.transport,
+          elevation_preference: "optimal",
+          routes: [variantShape],
+        });
+        setRoutes([variantShape]);
+        setSelectedIndex(0);
+        setPublicRouteMeta({
+          id: pub.id,
+          authorUsername: pub.author?.username ?? null,
+        });
+        setLoadingSaved(false);
+      } catch (err: any) {
+        if (cancelled) return;
+        setLoadingSaved(false);
+        Alert.alert(
+          tr("route-map.load-error"),
+          err?.response?.data?.code ?? err?.message ?? "Unknown error",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.publicId, authFetch]);
+
+  // Load a saved route by id (tap-through from profile). This resolves from
+  // the AsyncStorage cache first so it works offline, then silently refreshes.
+  useEffect(() => {
+    if (!params.savedId) return;
+    let cancelled = false;
+    (async () => {
+      const saved = await getSavedById(params.savedId!);
+      if (cancelled) return;
+      if (!saved) {
+        setLoadingSaved(false);
+        Alert.alert(tr("route-map.route-not-found"), tr("route-map.saved-route-unavailable"));
+        return;
+      }
+      // Build a single-variant Payload the rest of the screen can consume.
+      const variantShape: RouteVariant = {
+        label: saved.variantLabel ?? "saved",
+        description: saved.description ?? "",
+        profile: saved.transport,
+        distance_km: saved.distance / 1000,
+        duration_s: saved.duration,
+        ascent_m: saved.ascent ?? 0,
+        descent_m: saved.descent ?? 0,
+        geometry: saved.geometry,
+        bbox: saved.bbox,
+        pois: Array.isArray(saved.pois) ? (saved.pois as Poi[]) : [],
+      };
+      setPayload({
+        profile: saved.transport,
+        elevation_preference: "optimal",
+        routes: [variantShape],
+      });
+      setRoutes([variantShape]);
+      setSelectedIndex(0);
+      setLoadingSaved(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.savedId, getSavedById]);
+
+  const variant = routes[selectedIndex] ?? null;
+  const cameraRef = useRef<CameraRef>(null);
+  // Track which variant we've already fitted so POI state changes never re-trigger fitBounds
+  const fittedVariantRef = useRef<number>(-1);
+
+  // Stable pois reference — only recomputes when the variant changes, not on every render
+  const pois = useMemo(
+    () => (variant?.pois ?? []).filter((p) => p.properties.name),
+    [variant],
   );
 
-  useEffect(() => {
-    if (!savedId) return;
-    savedRoutesStore.getById(savedId).then((entry) => {
-      if (entry) {
-        setSavedPayload(entry.payload);
-        setSavedTitle(entry.title);
-        setSelectedIdx(entry.selectedIdx ?? 0);
-      } else {
-        setSelectedIdx(0);
+  const isWaypoint = useCallback(
+    (poi: Poi) =>
+      waypoints.some(
+        (w) => w[0] === poi.geometry.coordinates[0] && w[1] === poi.geometry.coordinates[1],
+      ),
+    [waypoints],
+  );
+
+  const handleToggleWaypoint = useCallback(
+    async (poi: Poi) => {
+      if (!genParams || !variant) return;
+
+      const coords = poi.geometry.coordinates as Coords;
+      const removing = isWaypoint(poi);
+      const newWaypoints = removing
+        ? waypoints.filter((w) => !(w[0] === coords[0] && w[1] === coords[1]))
+        : [...waypoints, coords];
+
+      setWaypoints(newWaypoints);
+      setIsRegenerating(true);
+
+      try {
+        const endpoint =
+          genParams.mode === "loop"
+            ? `${process.env.EXPO_PUBLIC_API_URL}/routes/generate-loop`
+            : `${process.env.EXPO_PUBLIC_API_URL}/routes/generate`;
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            ...genParams,
+            waypoints: newWaypoints,
+            variantLabel: variant.label,
+          }),
+        });
+
+        const json = await res.json();
+        if (!res.ok || json.status !== "success") throw new Error(json.message ?? "Failed");
+
+        const newRoute: RouteVariant = json.data.routes[0];
+        setRoutes((prev) => {
+          const next = [...prev];
+          next[selectedIndex] = newRoute;
+          return next;
+        });
+        // Force camera to re-fit the updated route
+        fittedVariantRef.current = -1;
+      } catch (e: any) {
+        setWaypoints(waypoints); // revert
+        Alert.alert(tr("common.error"), e.message ?? tr("route-map.load-error"));
+      } finally {
+        setIsRegenerating(false);
       }
-      setLoadingSaved(false);
-    });
-  }, [savedId]);
+    },
+    [genParams, variant, waypoints, isWaypoint, selectedIndex, token],
+  );
 
-  const payload = isSavedMode ? savedPayload : routeStore.get();
-  const routes: any[] = payload?.route?.routes ?? [];
-  const isRoundTrip = payload?.mode === "round_trip";
-  const isAIRoute = payload?.mode === "ai_route";
+  // ─── Save route ─────────────────────────────────────────────────────────────
+  //
+  // Map the backend's generator response (snake_case, km/s units) into the
+  // camelCase schema expected by POST /routes/saved (int metres/seconds).
+  const buildSavePayload = useCallback(
+    (title: string, description: string): SaveRouteInput | null => {
+      if (!variant || !genParams) return null;
 
-  const aiWaypoints: EnrichedPOI[] = payload?.plan?.waypoints ?? [];
-  const aiStart: EnrichedPOI | null = isAIRoute
-    ? (payload?.plan?.start ?? null)
-    : null;
-  const aiEnd: EnrichedPOI | null =
-    isAIRoute && !isRoundTrip ? (payload?.plan?.end ?? null) : null;
+      // Backend mode enum is uppercased; AI mode currently isn't carried in
+      // genParams (only a_to_b / loop come from the map screen), but future-proof it.
+      const modeMap: Record<string, RouteMode> = {
+        a_to_b: "A_TO_B",
+        loop: "LOOP",
+        ai: "AI",
+      };
+      const mode = modeMap[genParams.mode] ?? "A_TO_B";
 
-  const [mapReady, setMapReady] = useState(false);
-  const [selectedPOI, setSelectedPOI] = useState<EnrichedPOI | null>(null);
-  const [photoIdx, setPhotoIdx] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const [exporting, setExporting] = useState(false);
+      return {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        mode,
+        transport: variant.profile,
+        distance: Math.round(variant.distance_km * 1000),
+        duration: Math.round(variant.duration_s),
+        ascent: Math.round(variant.ascent_m),
+        descent: Math.round(variant.descent_m),
+        geometry: variant.geometry,
+        bbox: variant.bbox,
+        elevationProfile: (variant as any).elevation_profile ?? undefined,
+        instructions: (variant as any).maneuvers ?? undefined,
+        startLat: genParams.start[1],
+        startLng: genParams.start[0],
+        endLat: genParams.end?.[1],
+        endLng: genParams.end?.[0],
+        pois: variant.pois ?? undefined,
+        variantLabel: variant.label,
+        isPublic: saveIsPublic,
+      };
+    },
+    [variant, genParams, saveIsPublic],
+  );
 
-  const activeIdx = selectedIdx ?? 0;
-
-  // Reset photo index when a new POI is selected
-  useEffect(() => {
-    setPhotoIdx(0);
-  }, [selectedPOI?.name]);
+  // Pre-fill the title with something sensible when the modal opens.
+  const openSaveModal = useCallback(() => {
+    if (!variant) return;
+    const km = variant.distance_km.toFixed(1);
+    const prettyProfile = variant.profile
+      .replace(/^foot-/, "")
+      .replace(/^cycling-/, "")
+      .replace(/-/g, " ");
+    const defaultTitle =
+      genParams?.mode === "loop"
+        ? `${prettyProfile} loop · ${km} km`
+        : `${prettyProfile} · ${km} km`;
+    setSaveTitle(defaultTitle);
+    setSaveDescription("");
+    setSaveIsPublic(false); // Default to private — sharing is explicit per route
+    setSaveModalOpen(true);
+  }, [variant, genParams]);
 
   const handleSave = useCallback(async () => {
-    if (!payload || !routes.length) return;
-    setSaving(true);
-    try {
-      const route = routes[activeIdx];
-      const title =
-        isAIRoute && payload.plan?.title
-          ? payload.plan.title
-          : isRoundTrip
-            ? "Round Trip"
-            : "A → B Route";
-      await savedRoutesStore.save({
-        title,
-        mode: payload.mode,
-        distance: route.summary.distance,
-        duration: route.summary.duration,
-        selectedIdx: activeIdx,
-        payload,
-      });
-      Alert.alert("Saved", `"${title}" has been saved to your routes.`);
-    } catch {
-      Alert.alert("Error", "Could not save route.");
-    } finally {
-      setSaving(false);
+    const payload = buildSavePayload(saveTitle, saveDescription);
+    if (!payload) return;
+    if (!payload.title) {
+      Alert.alert(tr("route-map.title-required"), tr("route-map.title-required-body"));
+      return;
     }
-  }, [payload, routes, activeIdx, isAIRoute, isRoundTrip]);
-
-  const handleExport = useCallback(async () => {
-    if (!payload || !routes.length) return;
-    setExporting(true);
+    setIsSaving(true);
     try {
-      const route = routes[activeIdx];
-      const title =
-        savedTitle ||
-        (isAIRoute && payload.plan?.title
-          ? payload.plan.title
-          : "SmartTrail Route");
-      const description =
-        isAIRoute && payload.plan?.description ? payload.plan.description : "";
-      await exportRouteAsGpx(route, title, description);
-    } catch (err: any) {
-      Alert.alert("Export failed", err.message ?? "Could not export route.");
+      const saved = await saveRoute(payload);
+      setSavedRouteId(saved.id);
+      setSaveModalOpen(false);
+    } catch (e: any) {
+      Alert.alert(
+        tr("route-map.save-error"),
+        e?.response?.data?.code ?? e?.message ?? "Please try again.",
+      );
     } finally {
-      setExporting(false);
+      setIsSaving(false);
     }
-  }, [payload, routes, activeIdx, savedTitle, isAIRoute]);
+  }, [buildSavePayload, saveTitle, saveDescription, saveRoute]);
 
-  const onMapReady = useCallback(() => setMapReady(true), []);
+  // Animate POI panel in/out
+  const poiPanelAnim = useRef(new Animated.Value(200)).current;
+  useEffect(() => {
+    Animated.spring(poiPanelAnim, {
+      toValue: selectedPoi ? 0 : 200,
+      useNativeDriver: true,
+      damping: 20,
+      stiffness: 200,
+    }).start();
+  }, [selectedPoi]);
 
-  const decodedCoords: [number, number][][] = useMemo(
+  const poiGeoJSON = useMemo(
     () =>
-      routes.map((r) =>
-        typeof r.geometry === "string"
-          ? decodePolyline(r.geometry)
-          : ((r.geometry?.coordinates ?? []) as [number, number][]),
-      ),
-    [routes],
+      pois.length
+        ? ({ type: "FeatureCollection", features: pois } as const)
+        : null,
+    [pois],
   );
 
   useEffect(() => {
-    if (!mapReady || !cameraRef.current) return;
-    const coords = decodedCoords[activeIdx];
-    if (!coords?.length) return;
-    const { ne, sw } = boundsFromCoords(coords);
-    const duration = isFirstFit.current ? 0 : 600;
-    isFirstFit.current = false;
-    cameraRef.current.fitBounds(ne, sw, [80, 40, 300, 40], duration);
-  }, [activeIdx, mapReady, decodedCoords]);
+    if (Platform.OS === "android") {
+      PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      );
+    }
+  }, []);
 
-  const initialCenter = useMemo(() => {
-    const coords = decodedCoords[0];
-    if (!coords?.length) return [-74.006, 40.7128] as [number, number];
-    return boundsFromCoords(coords).center;
-  }, [decodedCoords]);
+  // Fit camera to selected route bbox — only once per variant, never again (so POI
+  // open/close or any other state change cannot trigger a re-fit / zoom-out)
+  useEffect(() => {
+    if (!variant || !mapReady) return;
+    if (fittedVariantRef.current === selectedIndex) return;
+    fittedVariantRef.current = selectedIndex;
+    const [minLng, minLat, maxLng, maxLat] = variant.bbox;
+    cameraRef.current?.fitBounds([maxLng, maxLat], [minLng, minLat], 60, 400);
+  }, [selectedIndex, mapReady, variant]);
 
-  const stableCamera = useMemo(
-    () => (
-      <Camera
-        ref={cameraRef}
-        defaultSettings={{ centerCoordinate: initialCenter, zoomLevel: 12 }}
-      />
-    ),
-    [],
+  // ─── Weather ────────────────────────────────────────────────────────────────
+  //
+  // Fetch forecast for start (and optionally mid + end) of the currently
+  // selected variant. Uses the client-side Zustand cache so switching between
+  // variants of the same route is free. Non-blocking — if the fetch fails we
+  // silently render nothing.
+  const getWeather = useWeatherStore((s) => s.getWeather);
+  const [weather, setWeather] = useState<(WeatherSnapshot | null)[]>([]);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const weatherPoints = useMemo(
+    () =>
+      variant
+        ? sampleRoutePoints(variant.geometry.coordinates, variant.distance_km)
+        : [],
+    [variant],
   );
 
-  const cardBg = isDark ? "#1e1e20" : "#ffffff";
-  const borderCol = isDark ? "#2c2c2e" : "#e5e5ea";
-  const sheetBg = isDark ? "#101012" : "#f8f8fa";
+  useEffect(() => {
+    if (weatherPoints.length === 0) return;
+    let cancelled = false;
+    setWeatherLoading(true);
+    getWeather(weatherPoints)
+      .then((snaps) => {
+        if (cancelled) return;
+        setWeather(snaps);
+      })
+      .finally(() => {
+        if (!cancelled) setWeatherLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [weatherPoints, getWeather]);
 
-  const sheetHeight = 14 + 60 + 110 + 65 + insets.bottom + 12;
-
-  // POI card height varies based on content
-  const hasPhoto = (selectedPOI?.photos?.length ?? 0) > 0;
-  const hasHours = (selectedPOI?.opening_hours?.length ?? 0) > 0;
-  const poiCardHeight =
-    (hasPhoto ? 180 : 0) +
-    60 + // header + description
-    (selectedPOI?.tip ? 44 : 0) +
-    (hasHours ? 44 : 0) +
-    60; // meta row + padding
+  const weatherPointLabels = useMemo(() => {
+    const n = weatherPoints.length;
+    if (n <= 1) return undefined;
+    if (n === 2)
+      return [
+        i18n.t("weather.start", { defaultValue: "Start" }),
+        i18n.t("weather.end", { defaultValue: "End" }),
+      ];
+    return [
+      i18n.t("weather.start", { defaultValue: "Start" }),
+      i18n.t("weather.mid", { defaultValue: "Mid" }),
+      i18n.t("weather.end", { defaultValue: "End" }),
+    ];
+  }, [weatherPoints.length]);
 
   if (loadingSaved) {
     return (
-      <View
-        style={[
-          styles.root,
-          {
-            backgroundColor: t.bg,
-            justifyContent: "center",
-            alignItems: "center",
-          },
-        ]}
-      >
+      <View style={[styles.root, styles.centered, { backgroundColor: t.bg }]}>
         <ActivityIndicator color={t.tint} />
       </View>
     );
   }
 
-  if (!payload || !routes.length) {
+  if (!payload || !variant) {
     return (
-      <View
-        style={[
-          styles.root,
-          {
-            backgroundColor: t.bg,
-            justifyContent: "center",
-            alignItems: "center",
-          },
-        ]}
-      >
-        <Text style={{ color: t.muted, marginBottom: 16 }}>
-          No routes to display.
+      <View style={[styles.root, styles.centered, { backgroundColor: t.bg }]}>
+        <Ionicons name="map-outline" size={40} color={t.muted} />
+        <Text style={[styles.emptyText, { color: t.muted }]}>
+          {tr("route-map.no-route")}
         </Text>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={{ color: ACCENT, fontWeight: "600" }}>← Go back</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backLink}>
+          <Text style={{ color: t.tint, fontWeight: "600" }}>{tr("route-map.go-back")}</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
+
   return (
     <View style={styles.root}>
+      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
+
       {/* ── Map ── */}
       <MapView
-        style={StyleSheet.absoluteFill}
-        mapStyle={osmStyle(isDark)}
+        style={styles.map}
+        mapStyle={OSM_STYLE}
         logoEnabled={false}
         attributionEnabled={false}
         compassEnabled={false}
-        onDidFinishLoadingMap={onMapReady}
+        onDidFinishLoadingMap={() => setMapReady(true)}
       >
-        {stableCamera}
-        <UserLocation visible androidRenderMode="compass" />
+        <Camera ref={cameraRef} />
 
-        {decodedCoords.map((coords, i) => {
-          const color = ROUTE_COLORS[i % ROUTE_COLORS.length];
-          const active = i === activeIdx;
-          return (
-            <ShapeSource
-              key={`route-${i}`}
-              id={`route-source-${i}`}
-              shape={{
-                type: "Feature",
-                geometry: { type: "LineString", coordinates: coords },
-                properties: { index: i },
+        {/* Route polylines */}
+        {routes.map((r, i) => (
+          <ShapeSource
+            key={`route-${i}`}
+            id={`route-source-${i}`}
+            shape={{ type: "Feature", geometry: r.geometry, properties: {} }}
+          >
+            <LineLayer
+              id={`route-line-${i}`}
+              style={{
+                lineColor:
+                  i === selectedIndex
+                    ? ROUTE_COLORS[i % ROUTE_COLORS.length]
+                    : "#aaaaaa",
+                lineWidth: i === selectedIndex ? 5 : 2,
+                lineCap: "round",
+                lineJoin: "round",
+                lineOpacity: i === selectedIndex ? 1 : 0.35,
               }}
-              onPress={() => setSelectedIdx(i)}
-            >
-              <LineLayer
-                id={`route-casing-${i}`}
-                style={{
-                  lineColor: "#ffffff",
-                  lineWidth: active ? 7 : 0,
-                  lineCap: "round",
-                  lineJoin: "round",
-                  lineOpacity: active ? 0.55 : 0,
-                }}
-                belowLayerID={`route-line-${i}`}
-              />
-              <LineLayer
-                id={`route-line-${i}`}
-                style={{
-                  lineColor: active ? color : "#aaaaaa",
-                  lineWidth: active ? 4.5 : 2,
-                  lineCap: "round",
-                  lineJoin: "round",
-                  lineOpacity: active ? 1 : 0.45,
-                  ...(active ? {} : { lineDasharray: [2, 2] }),
-                }}
-              />
-            </ShapeSource>
-          );
-        })}
+            />
+          </ShapeSource>
+        ))}
 
-        {payload.start && (
-          <PointAnnotation
-            id="marker-start"
-            coordinate={[payload.start.lng, payload.start.lat]}
+        {/* POI markers — stable id, shape prop updated reactively by MapLibre */}
+        {poiGeoJSON && mapReady && (
+          <ShapeSource
+            id="pois-source"
+            shape={poiGeoJSON}
+            onPress={(e) => {
+              const f = e.features?.[0];
+              if (!f) return;
+              const found = pois.find(
+                (p) => p.properties.id === f.properties?.id,
+              );
+              if (found) setSelectedPoi(found);
+            }}
           >
-            <MapPin label={isRoundTrip ? "A·B" : "A"} color="#22c55e" />
-          </PointAnnotation>
-        )}
-        {!isRoundTrip && payload.end && (
-          <PointAnnotation
-            id="marker-end"
-            coordinate={[payload.end.lng, payload.end.lat]}
-          >
-            <MapPin label="B" color={ACCENT} />
-          </PointAnnotation>
+            <CircleLayer
+              id="pois-layer"
+              style={{
+                circleRadius: 8,
+                circleColor: "#F59E0B",
+                circleStrokeWidth: 2.5,
+                circleStrokeColor: "#ffffff",
+              }}
+            />
+          </ShapeSource>
         )}
 
-        {isAIRoute && aiStart?.lat != null && (
-          <PointAnnotation
-            id="poi-start"
-            coordinate={[(aiStart as any).lng, (aiStart as any).lat]}
-            onSelected={() => setSelectedPOI(aiStart)}
-          >
-            <POIMarker label="S" color="#22c55e" />
-          </PointAnnotation>
-        )}
-
-        {isAIRoute &&
-          aiWaypoints.map((wp: any, i: number) => (
-            <PointAnnotation
-              key={`poi-${i}`}
-              id={`poi-${i}`}
-              coordinate={[wp.lng, wp.lat]}
-              onSelected={() => setSelectedPOI(wp)}
-            >
-              <POIMarker label={String(i + 1)} color="#f97316" />
-            </PointAnnotation>
-          ))}
-
-        {isAIRoute && !isRoundTrip && aiEnd?.lat != null && (
-          <PointAnnotation
-            id="poi-end"
-            coordinate={[(aiEnd as any).lng, (aiEnd as any).lat]}
-            onSelected={() => setSelectedPOI(aiEnd)}
-          >
-            <POIMarker label="E" color={ACCENT} />
-          </PointAnnotation>
-        )}
+        <UserLocation visible animated showsUserHeadingIndicator />
       </MapView>
 
-      {/* ── Back button ── */}
-      <TouchableOpacity
-        style={[
-          styles.backBtn,
-          {
-            top: insets.top + 12,
-            backgroundColor: cardBg,
-            borderColor: borderCol,
-          },
-        ]}
-        onPress={() => {
-          if (!isSavedMode) routeStore.clear();
-          router.back();
-        }}
-        activeOpacity={0.8}
-      >
-        <Text style={[styles.backBtnText, { color: t.text }]}>← Back</Text>
-      </TouchableOpacity>
-
-      {/* ── OSM attribution ── */}
-      <Text
-        style={[
-          styles.attribution,
-          { bottom: insets.bottom + sheetHeight - 8 },
-        ]}
-      >
-        © OpenStreetMap contributors © OpenFreeMap
-      </Text>
-
-      {/* ── Bottom sheet ── */}
-      <View
-        style={[
-          styles.sheet,
-          { backgroundColor: sheetBg, paddingBottom: insets.bottom + 12 },
-        ]}
-      >
-        <View style={[styles.handle, { backgroundColor: borderCol }]} />
-
-        <View style={styles.sheetHeader}>
-          {isAIRoute && payload?.plan ? (
-            <View style={{ flex: 1 }}>
-              <Text
-                style={[styles.sheetTitle, { color: t.text }]}
-                numberOfLines={1}
-              >
-                {payload.plan.title}
-              </Text>
-              <Text
-                style={[styles.sheetSubtitle, { color: t.muted }]}
-                numberOfLines={1}
-              >
-                {payload.plan.description}
-              </Text>
-            </View>
-          ) : (
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.sheetTitle, { color: t.text }]}>
-                {routes.length} route{routes.length > 1 ? "s" : ""} found
-              </Text>
-              <Text style={[styles.sheetSubtitle, { color: t.muted }]}>
-                Tap a route on the map or swipe below
-              </Text>
-            </View>
-          )}
-
-          {!isAIRoute && routes.length > 1 && (
-            <View
-              style={[
-                styles.routeBadge,
-                {
-                  backgroundColor:
-                    ROUTE_COLORS[activeIdx % ROUTE_COLORS.length] + "22",
-                },
-              ]}
-            >
-              <View
-                style={[
-                  styles.routeBadgeDot,
-                  {
-                    backgroundColor:
-                      ROUTE_COLORS[activeIdx % ROUTE_COLORS.length],
-                  },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.routeBadgeText,
-                  { color: ROUTE_COLORS[activeIdx % ROUTE_COLORS.length] },
-                ]}
-              >
-                {activeIdx + 1}/{routes.length}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.cardList}
-          decelerationRate="fast"
-          snapToInterval={SW * 0.78 + 10}
-          snapToAlignment="start"
+      {/* ── Top controls ── */}
+      <View style={[styles.topControls, { paddingTop: insets.top + 10 }]}>
+        <TouchableOpacity
+          style={[styles.iconBtn, { backgroundColor: t.bg }]}
+          onPress={() => router.back()}
         >
-          {routes.map((route, i) => {
-            const active = i === activeIdx;
-            const color = ROUTE_COLORS[i % ROUTE_COLORS.length];
-            return (
-              <TouchableOpacity
-                key={i}
-                style={[
-                  styles.card,
-                  { width: SW * 0.78, backgroundColor: cardBg },
-                  active
-                    ? { borderColor: color, borderWidth: 1.5 }
-                    : {
-                        borderColor: borderCol,
-                        borderWidth: StyleSheet.hairlineWidth,
-                      },
-                ]}
-                onPress={() => setSelectedIdx(i)}
-                activeOpacity={0.88}
-              >
-                <View style={[styles.cardBar, { backgroundColor: color }]} />
-                <View style={styles.cardContent}>
-                  <View style={styles.cardRow}>
-                    <Text style={[styles.cardTitle, { color: t.text }]}>
-                      {isAIRoute
-                        ? (payload.plan?.title ?? "Route")
-                        : `Route ${i + 1}`}
-                    </Text>
-                    {active && (
-                      <View
-                        style={[
-                          styles.activePill,
-                          { backgroundColor: color + "20" },
-                        ]}
-                      >
-                        <Text style={[styles.activePillText, { color }]}>
-                          Selected
-                        </Text>
-                      </View>
-                    )}
-                  </View>
+          <Ionicons name="arrow-back" size={20} color={t.text} />
+        </TouchableOpacity>
 
-                  <View style={styles.statsRow}>
-                    <StatBlock
-                      icon="↗"
-                      value={`${isRoundTrip || isAIRoute ? "~" : ""}${fmtDistance(route.summary.distance)}`}
-                      label="Distance"
-                      color={t.text}
-                      muted={t.muted}
-                    />
-                    <View
-                      style={[
-                        styles.statDivider,
-                        { backgroundColor: borderCol },
-                      ]}
-                    />
-                    <StatBlock
-                      icon="◷"
-                      value={fmtDuration(route.summary.duration)}
-                      label="Duration"
-                      color={t.text}
-                      muted={t.muted}
-                    />
-                    {isAIRoute && (
-                      <>
-                        <View
-                          style={[
-                            styles.statDivider,
-                            { backgroundColor: borderCol },
-                          ]}
-                        />
-                        <StatBlock
-                          icon="📍"
-                          value={String(
-                            (payload.plan?.waypoints?.length ?? 0) + 2,
-                          )}
-                          label="Stops"
-                          color={t.text}
-                          muted={t.muted}
-                        />
-                      </>
-                    )}
-                  </View>
-
-                  {route.segments?.[0]?.steps?.filter(
-                    (s: any) => s.name && s.name !== "-",
-                  ).length > 0 && (
-                    <View
-                      style={[styles.stepsRow, { borderTopColor: borderCol }]}
-                    >
-                      {route.segments[0].steps
-                        .filter((s: any) => s.name && s.name !== "-")
-                        .slice(0, 2)
-                        .map((step: any, si: number) => (
-                          <Text
-                            key={si}
-                            style={[styles.stepText, { color: t.muted }]}
-                            numberOfLines={1}
-                          >
-                            · {step.instruction}
-                          </Text>
-                        ))}
-                    </View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        <View style={styles.ctaRow}>
-          {isSavedMode ? (
-            <TouchableOpacity
-              style={[
-                styles.ctaBtn,
-                {
-                  backgroundColor:
-                    ROUTE_COLORS[activeIdx % ROUTE_COLORS.length],
-                  opacity: exporting ? 0.6 : 1,
-                },
-              ]}
-              activeOpacity={0.85}
-              onPress={handleExport}
-              disabled={exporting}
-            >
-              {exporting ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.ctaBtnText}>Export as GPX</Text>
-              )}
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[
-                styles.ctaBtn,
-                {
-                  backgroundColor:
-                    ROUTE_COLORS[activeIdx % ROUTE_COLORS.length],
-                  opacity: saving ? 0.6 : 1,
-                },
-              ]}
-              activeOpacity={0.85}
-              onPress={handleSave}
-              disabled={saving}
-            >
-              {saving ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.ctaBtnText}>Save Route</Text>
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* ── Rich POI card ── */}
-      {selectedPOI && (
-        <POICard
-          poi={selectedPOI}
-          photoIdx={photoIdx}
-          onPhotoIdx={setPhotoIdx}
-          onClose={() => setSelectedPOI(null)}
-          bottom={sheetHeight + 8}
-          cardBg={cardBg}
-          borderCol={borderCol}
-          textColor={t.text}
-          mutedColor={t.muted}
-          isDark={isDark}
-        />
-      )}
-    </View>
-  );
-}
-
-// ─── POICard ──────────────────────────────────────────────────────────────────
-
-function POICard({
-  poi,
-  photoIdx,
-  onPhotoIdx,
-  onClose,
-  bottom,
-  cardBg,
-  borderCol,
-  textColor,
-  mutedColor,
-  isDark,
-}: {
-  poi: EnrichedPOI;
-  photoIdx: number;
-  onPhotoIdx: (i: number) => void;
-  onClose: () => void;
-  bottom: number;
-  cardBg: string;
-  borderCol: string;
-  textColor: string;
-  mutedColor: string;
-  isDark: boolean;
-}) {
-  const photos = poi.photos ?? [];
-  const hasPhoto = photos.length > 0;
-
-  const openStatusColor =
-    poi.is_open_now === true
-      ? "#22c55e"
-      : poi.is_open_now === false
-        ? "#ef4444"
-        : mutedColor;
-  const openStatusLabel =
-    poi.is_open_now === true
-      ? "Open now"
-      : poi.is_open_now === false
-        ? "Closed"
-        : null;
-
-  const displayDesc =
-    poi.editorial_summary ?? poi.wikipedia_summary ?? poi.description;
-  const sourceTag =
-    poi.enriched_by === "wikipedia"
-      ? "via Wikipedia"
-      : poi.enriched_by === "google_places"
-        ? "via Google"
-        : null;
-
-  return (
-    <View
-      style={[
-        poiStyles.card,
-        { backgroundColor: cardBg, borderColor: borderCol, bottom },
-      ]}
-    >
-      {/* Photo strip */}
-      {hasPhoto && (
-        <View style={poiStyles.photoWrap}>
-          <Image
-            source={{ uri: photos[photoIdx] }}
-            style={poiStyles.photo}
-            resizeMode="cover"
-          />
-          {/* Photo counter dots */}
-          {photos.length > 1 && (
-            <View style={poiStyles.dotRow}>
-              {photos.map((_, i) => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={() => onPhotoIdx(i)}
-                  hitSlop={8}
-                >
-                  <View
-                    style={[
-                      poiStyles.dot,
-                      {
-                        backgroundColor:
-                          i === photoIdx ? "#fff" : "rgba(255,255,255,0.45)",
-                      },
-                    ]}
-                  />
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-          {/* Photo nav arrows */}
-          {photos.length > 1 && (
-            <>
-              {photoIdx > 0 && (
-                <TouchableOpacity
-                  style={[poiStyles.photoArrow, poiStyles.photoArrowLeft]}
-                  onPress={() => onPhotoIdx(photoIdx - 1)}
-                  hitSlop={8}
-                >
-                  <Text style={poiStyles.photoArrowText}>‹</Text>
-                </TouchableOpacity>
-              )}
-              {photoIdx < photos.length - 1 && (
-                <TouchableOpacity
-                  style={[poiStyles.photoArrow, poiStyles.photoArrowRight]}
-                  onPress={() => onPhotoIdx(photoIdx + 1)}
-                  hitSlop={8}
-                >
-                  <Text style={poiStyles.photoArrowText}>›</Text>
-                </TouchableOpacity>
-              )}
-            </>
-          )}
-          {/* Source tag */}
-          {sourceTag && (
-            <View style={poiStyles.sourceTag}>
-              <Text style={poiStyles.sourceTagText}>{sourceTag}</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      <View style={poiStyles.body}>
-        {/* Header row */}
-        <View style={poiStyles.headerRow}>
-          <View style={[poiStyles.poiDot, { backgroundColor: "#f97316" }]} />
-          <Text
-            style={[poiStyles.name, { color: textColor }]}
-            numberOfLines={2}
-          >
-            {poi.name}
-          </Text>
+        <View style={styles.topControlsRight}>
           <TouchableOpacity
-            onPress={onClose}
-            hitSlop={14}
-            style={poiStyles.closeBtn}
-          >
-            <Text style={{ fontSize: 20, color: mutedColor, lineHeight: 22 }}>
-              ×
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Meta row: rating · open status · duration */}
-        <View style={poiStyles.metaRow}>
-          {poi.rating != null && (
-            <View style={poiStyles.metaChip}>
-              <Text style={poiStyles.stars}>{renderStars(poi.rating)}</Text>
-              <Text style={[poiStyles.metaText, { color: mutedColor }]}>
-                {poi.rating.toFixed(1)}
-                {poi.review_count
-                  ? ` (${poi.review_count.toLocaleString()})`
-                  : ""}
-              </Text>
-            </View>
-          )}
-          {openStatusLabel && (
-            <View style={poiStyles.metaChip}>
-              <View
-                style={[
-                  poiStyles.openDot,
-                  { backgroundColor: openStatusColor },
-                ]}
-              />
-              <Text style={[poiStyles.metaText, { color: openStatusColor }]}>
-                {openStatusLabel}
-              </Text>
-            </View>
-          )}
-          {poi.duration_minutes != null && (
-            <View style={poiStyles.metaChip}>
-              <Text style={[poiStyles.metaText, { color: mutedColor }]}>
-                ⏱ ~{poi.duration_minutes} min
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Description */}
-        <Text style={[poiStyles.desc, { color: mutedColor }]} numberOfLines={3}>
-          {displayDesc}
-        </Text>
-
-        {/* Insider tip */}
-        {poi.tip && (
-          <View
             style={[
-              poiStyles.tipBox,
+              styles.iconBtn,
               {
-                backgroundColor: isDark ? "#2a2505" : "#fffbeb",
-                borderColor: isDark ? "#4a3f10" : "#fde68a",
+                backgroundColor: savedRouteId ? t.tint : t.bg,
               },
             ]}
+            onPress={openSaveModal}
+            disabled={!!savedRouteId || isSaving}
           >
-            <Text style={[poiStyles.tipLabel, { color: "#d97706" }]}>
-              💡 Insider tip
-            </Text>
-            <Text
-              style={[
-                poiStyles.tipText,
-                { color: isDark ? "#fde68a" : "#92400e" },
-              ]}
-              numberOfLines={2}
-            >
-              {poi.tip}
-            </Text>
-          </View>
-        )}
+            <Ionicons
+              name={savedRouteId ? "bookmark" : "bookmark-outline"}
+              size={20}
+              color={savedRouteId ? "#fff" : t.tint}
+            />
+          </TouchableOpacity>
 
-        {/* Opening hours (first 3 days) */}
-        {poi.opening_hours && poi.opening_hours.length > 0 && (
-          <View style={[poiStyles.hoursBox, { borderTopColor: borderCol }]}>
-            <Text style={[poiStyles.hoursLabel, { color: mutedColor }]}>
-              Hours
-            </Text>
-            {poi.opening_hours.slice(0, 3).map((line, i) => (
-              <Text
-                key={i}
-                style={[poiStyles.hoursLine, { color: mutedColor }]}
-                numberOfLines={1}
+          {pois.length > 0 && (
+            <TouchableOpacity
+              style={[
+                styles.iconBtn,
+                {
+                  backgroundColor: showPois ? "#F59E0B" : t.bg,
+                },
+              ]}
+              onPress={() => {
+                setShowPois((v) => !v);
+                setSelectedPoi(null);
+              }}
+            >
+              <Ionicons
+                name="location-outline"
+                size={20}
+                color={showPois ? "#fff" : "#F59E0B"}
+              />
+            </TouchableOpacity>
+          )}
+
+          {/* Navigate to start */}
+          <TouchableOpacity
+            style={[styles.iconBtn, { backgroundColor: t.bg }]}
+            onPress={handleNavigateToStart}
+            disabled={routes.length === 0}
+          >
+            <Ionicons name="navigate-outline" size={20} color={t.tint} />
+          </TouchableOpacity>
+
+          {/* Export GPX */}
+          <TouchableOpacity
+            style={[styles.iconBtn, { backgroundColor: t.bg }]}
+            onPress={handleExportGpx}
+            disabled={isExporting || routes.length === 0}
+          >
+            {isExporting ? (
+              <ActivityIndicator size="small" color={t.tint} />
+            ) : (
+              <Ionicons name="share-outline" size={20} color={t.tint} />
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* ── POI detail panel ── */}
+      <Animated.View
+        style={[
+          styles.poiPanel,
+          {
+            backgroundColor: t.bg,
+            borderColor: t.border,
+            paddingBottom: insets.bottom + 12,
+            transform: [{ translateY: poiPanelAnim }],
+          },
+        ]}
+        pointerEvents={selectedPoi ? "auto" : "none"}
+      >
+        {selectedPoi &&
+          (() => {
+            const props = selectedPoi.properties;
+            const isAi = !!props.place_id || genParams?.mode === "ai";
+            const description =
+              props.editorial_summary ?? props.ai_description ?? null;
+            const photoUri = props.photo_name
+              ? placePhotoUrl(props.photo_name, 320, 640)
+              : null;
+
+            return (
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 4 }}
               >
-                {line}
-              </Text>
+                {/* Photo */}
+                {photoUri && (
+                  <View style={styles.poiPhotoWrap}>
+                    <Image
+                      source={{ uri: photoUri }}
+                      style={styles.poiPhoto}
+                      resizeMode="cover"
+                    />
+                    <TouchableOpacity
+                      onPress={() => setSelectedPoi(null)}
+                      hitSlop={10}
+                      style={styles.poiPhotoClose}
+                    >
+                      <Ionicons name="close" size={18} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                <View style={styles.poiPanelHeader}>
+                  {!photoUri && (
+                    <View
+                      style={[
+                        styles.poiIconWrap,
+                        {
+                          backgroundColor: "#F59E0B18",
+                          borderColor: "#F59E0B40",
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={poiIcon(props.category)}
+                        size={20}
+                        color="#F59E0B"
+                      />
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[styles.poiName, { color: t.text }]}
+                      numberOfLines={2}
+                    >
+                      {props.name}
+                    </Text>
+                    {props.category && (
+                      <Text
+                        style={[styles.poiCategory, { color: t.muted }]}
+                        numberOfLines={1}
+                      >
+                        {props.category.replace(/_/g, " ")}
+                      </Text>
+                    )}
+                  </View>
+                  {!photoUri && (
+                    <TouchableOpacity
+                      onPress={() => setSelectedPoi(null)}
+                      hitSlop={10}
+                      style={styles.poiClose}
+                    >
+                      <Ionicons name="close" size={20} color={t.muted} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Rating row */}
+                {typeof props.rating === "number" && (
+                  <View style={styles.poiRatingRow}>
+                    <Ionicons name="star" size={14} color="#F59E0B" />
+                    <Text style={[styles.poiRatingValue, { color: t.text }]}>
+                      {props.rating.toFixed(1)}
+                    </Text>
+                    {typeof props.user_rating_count === "number" && (
+                      <Text style={[styles.poiRatingCount, { color: t.muted }]}>
+                        ({props.user_rating_count.toLocaleString()})
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* Description */}
+                {description && (
+                  <Text
+                    style={[styles.poiDescription, { color: t.text }]}
+                    numberOfLines={4}
+                  >
+                    {description}
+                  </Text>
+                )}
+
+                {/* Address */}
+                {props.formatted_address && (
+                  <View style={styles.poiInfoRow}>
+                    <Ionicons name="location-outline" size={14} color={t.muted} />
+                    <Text
+                      style={[styles.poiInfoText, { color: t.muted }]}
+                      numberOfLines={2}
+                    >
+                      {props.formatted_address}
+                    </Text>
+                  </View>
+                )}
+
+                {/* Distance from route — only for ORS-discovered POIs */}
+                {!isAi && (
+                  <View style={[styles.poiMeta, { borderTopColor: t.border }]}>
+                    <View style={styles.poiMetaItem}>
+                      <Ionicons
+                        name="navigate-outline"
+                        size={14}
+                        color={t.muted}
+                      />
+                      <Text style={[styles.poiMetaText, { color: t.muted }]}>
+                        {tr("route-map.from-route", {
+                          distance: formatDist(
+                            (props.distance_from_route ?? 0) / 1000,
+                          ),
+                        })}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* External links — Maps + Website */}
+                {(props.google_maps_uri || props.website_uri) && (
+                  <View style={styles.poiLinkRow}>
+                    {props.google_maps_uri && (
+                      <TouchableOpacity
+                        style={[
+                          styles.poiLinkBtn,
+                          {
+                            backgroundColor: t.surface,
+                            borderColor: t.border,
+                          },
+                        ]}
+                        onPress={() => openExternal(props.google_maps_uri)}
+                        activeOpacity={0.75}
+                      >
+                        <Ionicons name="map-outline" size={15} color={t.tint} />
+                        <Text
+                          style={[styles.poiLinkText, { color: t.tint }]}
+                        >
+                          {tr("route-map.open-in-maps")}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {props.website_uri && (
+                      <TouchableOpacity
+                        style={[
+                          styles.poiLinkBtn,
+                          {
+                            backgroundColor: t.surface,
+                            borderColor: t.border,
+                          },
+                        ]}
+                        onPress={() => openExternal(props.website_uri)}
+                        activeOpacity={0.75}
+                      >
+                        <Ionicons name="globe-outline" size={15} color={t.tint} />
+                        <Text
+                          style={[styles.poiLinkText, { color: t.tint }]}
+                        >
+                          {tr("route-map.website")}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
+
+                {/* Add/Remove waypoint — only for non-AI POIs (AI POIs are
+                    already routed through, so toggling them doesn't apply) */}
+                {genParams && !isAi && (
+                  <TouchableOpacity
+                    style={[
+                      styles.waypointBtn,
+                      {
+                        backgroundColor: isWaypoint(selectedPoi)
+                          ? t.danger + "15"
+                          : t.tint + "15",
+                        borderColor: isWaypoint(selectedPoi)
+                          ? t.danger
+                          : t.tint,
+                      },
+                    ]}
+                    onPress={() => handleToggleWaypoint(selectedPoi)}
+                    disabled={isRegenerating}
+                    activeOpacity={0.75}
+                  >
+                    {isRegenerating ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={isWaypoint(selectedPoi) ? t.danger : t.tint}
+                      />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name={
+                            isWaypoint(selectedPoi)
+                              ? "remove-circle-outline"
+                              : "add-circle-outline"
+                          }
+                          size={16}
+                          color={
+                            isWaypoint(selectedPoi) ? t.danger : t.tint
+                          }
+                        />
+                        <Text
+                          style={[
+                            styles.waypointBtnText,
+                            {
+                              color: isWaypoint(selectedPoi)
+                                ? t.danger
+                                : t.tint,
+                            },
+                          ]}
+                        >
+                          {isWaypoint(selectedPoi)
+                            ? tr("route-map.remove-from-route")
+                            : tr("route-map.add-to-route")}
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+            );
+          })()}
+      </Animated.View>
+
+      {/* ── POI list panel ── */}
+      {!selectedPoi && showPois && (
+        <View
+          style={[
+            styles.bottomPanel,
+            {
+              backgroundColor: t.bg,
+              borderTopColor: t.border,
+              paddingBottom: insets.bottom + 8,
+              maxHeight: 340,
+            },
+          ]}
+        >
+          <View style={styles.panelHeader}>
+            <Text style={[styles.panelTitle, { color: t.text }]}>
+              {tr("route-map.nearby-places")}
+            </Text>
+            <TouchableOpacity onPress={() => setShowPois(false)} hitSlop={8}>
+              <Ionicons name="close" size={20} color={t.muted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {pois.map((poi, i) => (
+              <TouchableOpacity
+                key={poi.properties.id ?? i}
+                style={[
+                  styles.poiRow,
+                  i < pois.length - 1 && {
+                    borderBottomColor: t.border,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                  },
+                ]}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setSelectedPoi(poi);
+                  setShowPois(false);
+                }}
+              >
+                <View
+                  style={[
+                    styles.poiRowIcon,
+                    { backgroundColor: "#F59E0B18", borderColor: "#F59E0B40" },
+                  ]}
+                >
+                  <Ionicons
+                    name={poiIcon(poi.properties.category)}
+                    size={16}
+                    color="#F59E0B"
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={[styles.poiRowName, { color: t.text }]}
+                    numberOfLines={1}
+                  >
+                    {poi.properties.name}
+                  </Text>
+                  {poi.properties.category && (
+                    <Text
+                      style={[styles.poiRowCategory, { color: t.muted }]}
+                      numberOfLines={1}
+                    >
+                      {poi.properties.category}
+                    </Text>
+                  )}
+                </View>
+                <Text style={[styles.poiRowDist, { color: t.muted }]}>
+                  {formatDist((poi.properties.distance_from_route ?? 0) / 1000)}
+                </Text>
+              </TouchableOpacity>
             ))}
-            {poi.opening_hours.length > 3 && (
-              <Text style={[poiStyles.hoursLine, { color: mutedColor }]}>
-                +{poi.opening_hours.length - 3} more days…
+          </ScrollView>
+        </View>
+      )}
+
+      {/* ── Stats + variant selector ── */}
+      {!selectedPoi && !showPois && (
+        <View
+          style={[
+            styles.bottomPanel,
+            {
+              backgroundColor: t.bg,
+              borderTopColor: t.border,
+              paddingBottom: insets.bottom + 8,
+            },
+          ]}
+        >
+          {(weather.length > 0 || weatherLoading) && (
+            <WeatherCard
+              snapshots={weather}
+              loading={weatherLoading}
+              pointLabels={weatherPointLabels}
+            />
+          )}
+
+          <View style={styles.statsRow}>
+            <View style={styles.stat}>
+              <Ionicons name="map-outline" size={14} color={t.muted} />
+              <Text style={[styles.statValue, { color: t.text }]}>
+                {formatDist(variant.distance_km)}
               </Text>
+            </View>
+            <View style={[styles.statDivider, { backgroundColor: t.border }]} />
+            <View style={styles.stat}>
+              <Ionicons name="time-outline" size={14} color={t.muted} />
+              <Text style={[styles.statValue, { color: t.text }]}>
+                {formatTime(variant.duration_s)}
+              </Text>
+            </View>
+            {variant.ascent_m > 0 && (
+              <>
+                <View
+                  style={[styles.statDivider, { backgroundColor: t.border }]}
+                />
+                <View style={styles.stat}>
+                  <Ionicons
+                    name="trending-up-outline"
+                    size={14}
+                    color={t.muted}
+                  />
+                  <Text style={[styles.statValue, { color: t.text }]}>
+                    {variant.ascent_m} m
+                  </Text>
+                </View>
+              </>
+            )}
+
+            {pois.length > 0 && (
+              <>
+                <View
+                  style={[styles.statDivider, { backgroundColor: t.border }]}
+                />
+                <View style={styles.stat}>
+                  <Ionicons name="location-outline" size={14} color="#F59E0B" />
+                  <Text style={[styles.statValue, { color: t.text }]}>
+                    {pois.length}
+                  </Text>
+                </View>
+              </>
             )}
           </View>
-        )}
 
-        {/* Website link */}
-        {poi.website && (
-          <TouchableOpacity
-            onPress={() => Linking.openURL(poi.website!)}
-            style={poiStyles.websiteRow}
-          >
-            <Text
-              style={[poiStyles.websiteText, { color: ACCENT }]}
-              numberOfLines={1}
+          {routes.length > 1 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.variantScroll}
             >
-              🔗 {poi.website.replace(/^https?:\/\/(www\.)?/, "")}
-            </Text>
-          </TouchableOpacity>
-        )}
-        {poi.wikipedia_url && !poi.website && (
-          <TouchableOpacity
-            onPress={() => Linking.openURL(poi.wikipedia_url!)}
-            style={poiStyles.websiteRow}
-          >
-            <Text style={[poiStyles.websiteText, { color: ACCENT }]}>
-              📖 Read on Wikipedia
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </View>
-  );
-}
+              {routes.map((r, i) => {
+                const active = i === selectedIndex;
+                const color = ROUTE_COLORS[i % ROUTE_COLORS.length];
+                return (
+                  <TouchableOpacity
+                    key={i}
+                    style={[
+                      styles.variantCard,
+                      {
+                        backgroundColor: active ? t.surface : t.bg,
+                        borderColor: active ? color : t.border,
+                      },
+                    ]}
+                    onPress={() => {
+                      setSelectedIndex(i);
+                      setSelectedPoi(null);
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <View
+                      style={[styles.variantDot, { backgroundColor: color }]}
+                    />
+                    <View>
+                      <Text style={[styles.variantLabel, { color: t.text }]}>
+                        {r.label.charAt(0).toUpperCase() + r.label.slice(1)}
+                      </Text>
+                      <Text style={[styles.variantMeta, { color: t.muted }]}>
+                        {formatDist(r.distance_km)} · {formatTime(r.duration_s)}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          )}
+        </View>
+      )}
 
-// ─── MapPin ───────────────────────────────────────────────────────────────────
-
-function MapPin({ label, color }: { label: string; color: string }) {
-  const size = 36;
-  const tailSize = Math.round(size * 0.38);
-  const borderWidth = Math.max(2, Math.round(size * 0.065));
-  const fontSize =
-    label.length > 1 ? Math.round(size * 0.24) : Math.round(size * 0.38);
-  return (
-    <View
-      style={{ width: size + 8, height: size + tailSize, alignItems: "center" }}
-    >
-      <View
-        style={{
-          position: "absolute",
-          bottom: 0,
-          width: tailSize,
-          height: tailSize,
-          backgroundColor: color,
-          transform: [{ rotate: "45deg" }],
-          borderBottomRightRadius: 3,
-          elevation: 5,
-        }}
-      />
-      <View
-        style={{
-          position: "absolute",
-          top: size * 0.07,
-          width: size + 8,
-          height: size + 8,
-          borderRadius: (size + 8) / 2,
-          backgroundColor: color,
-          opacity: 0.2,
-        }}
-      />
-      <View
-        style={{
-          position: "absolute",
-          top: 0,
-          width: size,
-          height: size,
-          borderRadius: size / 2,
-          backgroundColor: color,
-          borderWidth,
-          borderColor: "#fff",
-          justifyContent: "center",
-          alignItems: "center",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 5 },
-          shadowOpacity: 0.4,
-          shadowRadius: 8,
-          elevation: 10,
-        }}
+      {/* ── Save route modal ── */}
+      <Modal
+        visible={saveModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isSaving && setSaveModalOpen(false)}
       >
-        <Text
-          style={{
-            fontSize,
-            fontWeight: "900",
-            color: "#fff",
-            letterSpacing: -0.5,
-          }}
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
-          {label}
-        </Text>
-      </View>
-    </View>
-  );
-}
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => !isSaving && setSaveModalOpen(false)}
+          />
+          <View
+            style={[
+              styles.modalCard,
+              { backgroundColor: t.bg, borderColor: t.border },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: t.text }]}>
+              {tr("route-map.save-modal-title")}
+            </Text>
+            <Text style={[styles.modalSubtitle, { color: t.muted }]}>
+              {tr("route-map.save-modal-subtitle")}
+            </Text>
 
-// ─── POIMarker ────────────────────────────────────────────────────────────────
+            <Text style={[styles.modalLabel, { color: t.muted }]}>{tr("route-map.save-modal-title-label")}</Text>
+            <TextInput
+              value={saveTitle}
+              onChangeText={setSaveTitle}
+              placeholder={tr("route-map.save-modal-title-placeholder")}
+              placeholderTextColor={t.muted}
+              maxLength={100}
+              style={[
+                styles.modalInput,
+                {
+                  color: t.text,
+                  backgroundColor: t.surface,
+                  borderColor: t.border,
+                },
+              ]}
+            />
 
-function POIMarker({ label, color }: { label: string; color: string }) {
-  const size = 28;
-  const fontSize =
-    label.length > 1 ? Math.round(size * 0.34) : Math.round(size * 0.42);
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: color,
-        borderWidth: Math.max(1.5, size * 0.06),
-        borderColor: "#fff",
-        justifyContent: "center",
-        alignItems: "center",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.35,
-        shadowRadius: 5,
-        elevation: 8,
-      }}
-    >
-      <Text style={{ fontSize, fontWeight: "800", color: "#fff" }}>
-        {label}
-      </Text>
-    </View>
-  );
-}
+            <Text style={[styles.modalLabel, { color: t.muted }]}>
+              {tr("route-map.save-modal-description-label")}
+            </Text>
+            <TextInput
+              value={saveDescription}
+              onChangeText={setSaveDescription}
+              placeholder={tr("route-map.save-modal-description-placeholder")}
+              placeholderTextColor={t.muted}
+              maxLength={500}
+              multiline
+              style={[
+                styles.modalInput,
+                styles.modalInputMultiline,
+                {
+                  color: t.text,
+                  backgroundColor: t.surface,
+                  borderColor: t.border,
+                },
+              ]}
+            />
 
-// ─── StatBlock ────────────────────────────────────────────────────────────────
+            {/* Share publicly toggle — opt-in per route. When on, this route
+                appears in the Discover feed for users near the start point. */}
+            <View style={styles.publicToggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.publicToggleLabel, { color: t.text }]}>
+                  {tr("route-map.save-modal-share-label")}
+                </Text>
+                <Text
+                  style={[styles.publicToggleHint, { color: t.muted }]}
+                  numberOfLines={2}
+                >
+                  {tr("route-map.save-modal-share-hint")}
+                </Text>
+              </View>
+              <Switch
+                value={saveIsPublic}
+                onValueChange={setSaveIsPublic}
+                trackColor={{ false: t.border, true: t.tint }}
+                thumbColor="#fff"
+              />
+            </View>
 
-function StatBlock({
-  icon,
-  value,
-  label,
-  color,
-  muted,
-}: {
-  icon: string;
-  value: string;
-  label: string;
-  color: string;
-  muted: string;
-}) {
-  return (
-    <View style={styles.statBlock}>
-      <Text style={[styles.statValue, { color }]}>
-        <Text style={{ color: muted, fontSize: 11 }}>{icon} </Text>
-        {value}
-      </Text>
-      <Text style={[styles.statLabel, { color: muted }]}>{label}</Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { borderColor: t.border }]}
+                onPress={() => setSaveModalOpen(false)}
+                disabled={isSaving}
+              >
+                <Text style={{ color: t.text, fontWeight: "600" }}>{tr("common.cancel")}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  { backgroundColor: t.tint, borderColor: t.tint },
+                ]}
+                onPress={handleSave}
+                disabled={isSaving || !saveTitle.trim()}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>{tr("common.save")}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -1084,205 +1368,279 @@ function StatBlock({
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  centered: { alignItems: "center", justifyContent: "center", gap: 12 },
+  map: { flex: 1 },
+  emptyText: { fontSize: 15 },
+  backLink: { marginTop: 4 },
 
-  backBtn: {
+  topControls: {
     position: "absolute",
+    top: 0,
     left: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 99,
-    borderWidth: StyleSheet.hairlineWidth,
-    zIndex: 10,
+    right: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  topControlsRight: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.12,
     shadowRadius: 6,
-    elevation: 4,
-  },
-  backBtnText: { fontSize: 14, fontWeight: "500" },
-
-  attribution: {
-    position: "absolute",
-    right: 8,
-    fontSize: 9,
-    color: "#777",
-    zIndex: 5,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
 
-  sheet: {
+  // POI detail panel — slides up from bottom
+  poiPanel: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 16,
+    paddingHorizontal: 16,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: -6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    elevation: 16,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: -2 },
+    elevation: 8,
   },
-  handle: {
-    width: 32,
-    height: 4,
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: 12,
-  },
-  sheetHeader: {
+  poiPanelHeader: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 18,
-    marginBottom: 12,
-    gap: 10,
+    gap: 12,
   },
-  sheetTitle: { fontSize: 15, fontWeight: "700", letterSpacing: -0.2 },
-  sheetSubtitle: { fontSize: 12, marginTop: 2 },
-  routeBadge: {
-    flexDirection: "row",
+  poiIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    borderWidth: 1,
     alignItems: "center",
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 99,
-  },
-  routeBadgeDot: { width: 6, height: 6, borderRadius: 3 },
-  routeBadgeText: { fontSize: 12, fontWeight: "700" },
-
-  cardList: { paddingHorizontal: 18, gap: 10 },
-  card: { borderRadius: 16, overflow: "hidden", flexDirection: "row" },
-  cardBar: { width: 4 },
-  cardContent: { flex: 1, padding: 14, gap: 10 },
-  cardRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  cardTitle: { fontSize: 15, fontWeight: "700", letterSpacing: -0.2 },
-  activePill: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 99 },
-  activePillText: { fontSize: 11, fontWeight: "600" },
-
-  statsRow: { flexDirection: "row", alignItems: "center" },
-  statBlock: { flex: 1, alignItems: "center", gap: 2 },
-  statValue: { fontSize: 15, fontWeight: "700", letterSpacing: -0.3 },
-  statLabel: { fontSize: 10, letterSpacing: 0.3, textTransform: "uppercase" },
-  statDivider: { width: StyleSheet.hairlineWidth, height: 32, opacity: 0.5 },
-
-  stepsRow: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, gap: 3 },
-  stepText: { fontSize: 12, lineHeight: 17 },
-
-  ctaRow: { paddingHorizontal: 18, paddingTop: 10 },
-  ctaBtn: { borderRadius: 14, paddingVertical: 15, alignItems: "center" },
-  ctaBtnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-    letterSpacing: -0.3,
-  },
-});
-
-const poiStyles = StyleSheet.create({
-  card: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 18,
-    elevation: 12,
-    zIndex: 20,
-  },
-
-  // Photo
-  photoWrap: { width: "100%", height: 160, position: "relative" },
-  photo: { width: "100%", height: 160 },
-  dotRow: {
-    position: "absolute",
-    bottom: 8,
-    alignSelf: "center",
-    flexDirection: "row",
-    gap: 5,
-  },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  photoArrow: {
-    position: "absolute",
-    top: "50%",
-    marginTop: -18,
-    width: 32,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: "rgba(0,0,0,0.35)",
     justifyContent: "center",
+  },
+  poiName: { fontSize: 16, fontWeight: "700" },
+  poiCategory: { fontSize: 13, marginTop: 2 },
+  poiClose: {
+    padding: 4,
+  },
+  poiMeta: {
+    flexDirection: "row",
+    gap: 16,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  waypointBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  waypointBtnText: { fontSize: 14, fontWeight: "600" },
+  poiMetaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  poiMetaText: { fontSize: 13 },
+
+  // Photo header (AI / Google Places POIs)
+  poiPhotoWrap: {
+    position: "relative",
+    marginHorizontal: -16,
+    marginTop: -16,
+    marginBottom: 12,
+  },
+  poiPhoto: {
+    width: "100%",
+    height: 180,
+    backgroundColor: "#00000010",
+  },
+  poiPhotoClose: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  // Rating row
+  poiRatingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 10,
+  },
+  poiRatingValue: { fontSize: 14, fontWeight: "700" },
+  poiRatingCount: { fontSize: 12 },
+
+  // Description
+  poiDescription: {
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 10,
+  },
+
+  // Info rows (address, etc.)
+  poiInfoRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 10,
+  },
+  poiInfoText: { fontSize: 12, flex: 1, lineHeight: 17 },
+
+  // External link buttons
+  poiLinkRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 12,
+  },
+  poiLinkBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  poiLinkText: { fontSize: 13, fontWeight: "600" },
+
+  bottomPanel: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 12,
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  statsRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  stat: { flexDirection: "row", alignItems: "center", gap: 5 },
+  statValue: { fontSize: 15, fontWeight: "600" },
+  statDivider: { width: 1, height: 14 },
+
+  variantScroll: { paddingBottom: 4, gap: 10 },
+  variantCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    minWidth: 140,
+  },
+  variantDot: { width: 10, height: 10, borderRadius: 5 },
+  variantLabel: { fontSize: 14, fontWeight: "600" },
+  variantMeta: { fontSize: 12, marginTop: 2 },
+
+  panelHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
   },
-  photoArrowLeft: { left: 8 },
-  photoArrowRight: { right: 8 },
-  photoArrowText: {
-    color: "#fff",
-    fontSize: 22,
-    lineHeight: 26,
-    fontWeight: "600",
-  },
-  sourceTag: {
-    position: "absolute",
-    top: 8,
-    right: 8,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    borderRadius: 6,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-  },
-  sourceTagText: { color: "#fff", fontSize: 10, fontWeight: "500" },
+  panelTitle: { fontSize: 16, fontWeight: "700" },
 
-  // Body
-  body: { padding: 14, gap: 8 },
-  headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  poiDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4 },
-  name: {
+  poiRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 11,
+  },
+  poiRowIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  poiRowName: { fontSize: 14, fontWeight: "600" },
+  poiRowCategory: { fontSize: 12, marginTop: 1 },
+  poiRowDist: { fontSize: 12, flexShrink: 0 },
+
+  // Save route modal
+  modalBackdrop: {
     flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 20,
+    gap: 4,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "700" },
+  modalSubtitle: { fontSize: 13, marginBottom: 8 },
+  modalLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 10,
+    marginBottom: 6,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: -0.2,
-    lineHeight: 20,
   },
-  closeBtn: { paddingLeft: 4 },
-
-  // Meta chips
-  metaRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  metaChip: { flexDirection: "row", alignItems: "center", gap: 4 },
-  stars: { fontSize: 11, color: "#f59e0b", letterSpacing: 1 },
-  metaText: { fontSize: 12 },
-  openDot: { width: 7, height: 7, borderRadius: 3.5 },
-
-  desc: { fontSize: 13, lineHeight: 20 },
-
-  // Insider tip
-  tipBox: { borderRadius: 10, borderWidth: 1, padding: 10, gap: 3 },
-  tipLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
+  modalInputMultiline: {
+    minHeight: 72,
+    textAlignVertical: "top",
   },
-  tipText: { fontSize: 12, lineHeight: 18 },
-
-  // Hours
-  hoursBox: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, gap: 2 },
-  hoursLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 2,
+  publicToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 14,
   },
-  hoursLine: { fontSize: 12, lineHeight: 18 },
-
-  // Website
-  websiteRow: { paddingTop: 2 },
-  websiteText: { fontSize: 13, fontWeight: "500" },
+  publicToggleLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  publicToggleHint: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 18,
+  },
+  modalBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalBtnPrimary: {},
 });

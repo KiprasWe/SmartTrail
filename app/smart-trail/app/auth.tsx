@@ -1,3 +1,4 @@
+import AntDesign from "@expo/vector-icons/AntDesign";
 import { useState } from "react";
 import {
   View,
@@ -15,13 +16,13 @@ import {
   KeyboardAwareScrollView,
   KeyboardStickyView,
 } from "react-native-keyboard-controller";
-import { useAuth } from "@/context/auth-context";
+import { useAuthStore } from "@/store/use-auth-store";
 import { Colors } from "@/constants/theme";
 import { useApiError } from "@/hooks/use-api-errors";
 import { useTranslation } from "@/hooks/use-translation";
 
 export default function AuthScreen() {
-  const { signin, signup, signinWithGoogle } = useAuth();
+  const { signin, signup, signinWithGoogle } = useAuthStore();
   const scheme = useColorScheme() ?? "light";
   const { resolve } = useApiError();
   const isDark = scheme === "dark";
@@ -143,7 +144,7 @@ export default function AuthScreen() {
             <ActivityIndicator color={tc.text} size="small" />
           ) : (
             <>
-              <Text style={[styles.googleG, { color: tc.text }]}>G</Text>
+              <AntDesign name="google" size={16} color={tc.text} />
               <Text style={[styles.googleLabel, { color: tc.text }]}>
                 {t("auth.google")}
               </Text>
@@ -280,7 +281,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginBottom: 20,
   },
-  googleG: { fontSize: 16, fontWeight: "800" },
   googleLabel: { fontSize: 14, fontWeight: "600" },
 
   divider: {

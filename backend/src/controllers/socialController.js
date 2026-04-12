@@ -12,6 +12,7 @@ const PUBLIC_USER_SELECT = {
 export const searchUsers = asyncHandler(async (req, res) => {
   const { username } = req.params;
   const currentUserId = req.user.id;
+  const limit = Math.min(parseInt(req.query.limit ?? "30", 10) || 30, 100);
 
   const users = await prisma.user.findMany({
     where: {
@@ -19,6 +20,7 @@ export const searchUsers = asyncHandler(async (req, res) => {
       NOT: { id: currentUserId },
     },
     select: PUBLIC_USER_SELECT,
+    take: limit,
   });
 
   const follows = await prisma.follow.findMany({
@@ -207,40 +209,52 @@ export const removeFollower = asyncHandler(async (req, res) => {
 
 export const getFollowers = asyncHandler(async (req, res) => {
   const { userId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
+  const cursor = req.query.cursor;
 
   const follows = await prisma.follow.findMany({
     where: { followingId: userId, status: "ACCEPTED" },
     select: {
+      id: true,
       follower: { select: PUBLIC_USER_SELECT },
       createdAt: true,
     },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    orderBy: { createdAt: "desc" },
   });
 
-  const followers = follows.map((f) => ({
-    ...f.follower,
-    followedAt: f.createdAt,
-  }));
+  const hasMore = follows.length > limit;
+  const page = hasMore ? follows.slice(0, limit) : follows;
+  const nextCursor = hasMore ? page[page.length - 1].id : null;
 
-  return sendSuccess(res, Success.FOLLOWERS_FETCHED, { followers });
+  const followers = page.map((f) => ({ ...f.follower, followedAt: f.createdAt }));
+  return sendSuccess(res, Success.FOLLOWERS_FETCHED, { followers, nextCursor });
 });
 
 export const getFollowing = asyncHandler(async (req, res) => {
   const { userId } = req.params;
+  const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
+  const cursor = req.query.cursor;
 
   const follows = await prisma.follow.findMany({
     where: { followerId: userId, status: "ACCEPTED" },
     select: {
+      id: true,
       following: { select: PUBLIC_USER_SELECT },
       createdAt: true,
     },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    orderBy: { createdAt: "desc" },
   });
 
-  const following = follows.map((f) => ({
-    ...f.following,
-    followedAt: f.createdAt,
-  }));
+  const hasMore = follows.length > limit;
+  const page = hasMore ? follows.slice(0, limit) : follows;
+  const nextCursor = hasMore ? page[page.length - 1].id : null;
 
-  return sendSuccess(res, Success.FOLLOWING_FETCHED, { following });
+  const following = page.map((f) => ({ ...f.following, followedAt: f.createdAt }));
+  return sendSuccess(res, Success.FOLLOWING_FETCHED, { following, nextCursor });
 });
 
 export const getUserProfile = asyncHandler(async (req, res) => {
@@ -273,13 +287,19 @@ export const getUserProfile = asyncHandler(async (req, res) => {
   let followStatus = null;
   if (!isOwnProfile) {
     const follow = await prisma.follow.findUnique({
-      where: { followerId_followingId: { followerId: currentUserId, followingId: userId } },
+      where: {
+        followerId_followingId: {
+          followerId: currentUserId,
+          followingId: userId,
+        },
+      },
       select: { status: true },
     });
     followStatus = follow?.status ?? null;
   }
 
-  const canViewContent = isOwnProfile || user.isPublic || followStatus === "ACCEPTED";
+  const canViewContent =
+    isOwnProfile || user.isPublic || followStatus === "ACCEPTED";
 
   const { _count, ...rest } = user;
 
@@ -297,6 +317,8 @@ export const getUserProfile = asyncHandler(async (req, res) => {
 
 export const getFollowRequests = asyncHandler(async (req, res) => {
   const followingId = req.user.id;
+  const limit = Math.min(parseInt(req.query.limit ?? "50", 10) || 50, 200);
+  const cursor = req.query.cursor;
 
   const requests = await prisma.follow.findMany({
     where: { followingId, status: "PENDING" },
@@ -307,13 +329,20 @@ export const getFollowRequests = asyncHandler(async (req, res) => {
       },
       createdAt: true,
     },
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    orderBy: { createdAt: "desc" },
   });
 
-  const followRequests = requests.map((r) => ({
+  const hasMore = requests.length > limit;
+  const page = hasMore ? requests.slice(0, limit) : requests;
+  const nextCursor = hasMore ? page[page.length - 1].id : null;
+
+  const followRequests = page.map((r) => ({
     ...r.follower,
     requestId: r.id,
     requestedAt: r.createdAt,
   }));
 
-  return sendSuccess(res, Success.FOLLOW_REQUESTS_FETCHED, { followRequests });
+  return sendSuccess(res, Success.FOLLOW_REQUESTS_FETCHED, { followRequests, nextCursor });
 });

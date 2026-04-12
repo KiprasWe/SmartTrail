@@ -1,0 +1,22 @@
+# lefthook pre-commit hooks — https://github.com/evilmartians/lefthook
+# Install: npx lefthook install
+# (or: brew install lefthook && lefthook install)
+
+pre-commit:
+  parallel: true
+  commands:
+    gitleaks:
+      run: gitleaks protect --staged --redact --config .gitleaks.toml
+      skip:
+        - merge
+        - rebase
+
+    # Lint frontend before committing changed .ts/.tsx files.
+    frontend-lint:
+      glob: "app/smart-trail/**/*.{ts,tsx}"
+      run: cd app/smart-trail && npx expo lint --fix
+
+    # Type-check frontend.
+    frontend-typecheck:
+      glob: "app/smart-trail/**/*.{ts,tsx}"
+      run: cd app/smart-trail && npx tsc --noEmit

@@ -105,7 +105,7 @@ export function bboxFromCorridor(start, end, bufferM) {
 }
 
 // Lat/lng bounding box centred at lat/lng with radius in km. Returns
-// { minLat, maxLat, minLng, maxLng } — used by discoverRoutes.
+// { minLat, maxLat, minLng, maxLng }
 export function boundingBox(lat, lng, radiusKm) {
   const latDelta = radiusKm / 111;
   const lngDelta =
@@ -163,6 +163,49 @@ export function corridorFilter(pois, start, end, corridorHalfWidthM = 3_000) {
     console.log(
       `[corridor] dropped ${dropped.length}:`,
       dropped.map((d) => `${d.name} — ${d.reason}`).join(" | "),
+    );
+  }
+  return kept;
+}
+
+// Point-to-segment distance in metres using local XY around the segment's first
+// vertex. Returns perpendicular distance if the foot falls within [A,B],
+// otherwise distance to the nearer endpoint.
+function pointToSegmentM(point, segA, segB) {
+  const p = toLocalXY(point, segA);
+  const e = toLocalXY(segB, segA);
+  const lenSq = e[0] * e[0] + e[1] * e[1];
+  if (lenSq < 1) return Math.hypot(p[0], p[1]); // degenerate segment
+  const t = Math.max(0, Math.min(1, (p[0] * e[0] + p[1] * e[1]) / lenSq));
+  return Math.hypot(p[0] - t * e[0], p[1] - t * e[1]);
+}
+
+// Like corridorFilter but measures distance to the actual route polyline instead
+// of the straight start→end line. More accurate for winding roads.
+// routeCoords: [[lng, lat], ...] from ORS geometry.
+export function polylineCorridorFilter(pois, routeCoords, halfWidthM = 3_000) {
+  // Thin to ~150 segments — fast enough for a single filter pass.
+  const thinned = thinCoords(routeCoords, 150);
+  const kept = [];
+  const dropped = [];
+  for (const poi of pois) {
+    const pt = [poi.lng, poi.lat];
+    let minDist = Infinity;
+    for (let i = 0; i < thinned.length - 1; i++) {
+      const d = pointToSegmentM(pt, thinned[i], thinned[i + 1]);
+      if (d < minDist) minDist = d;
+      if (minDist === 0) break;
+    }
+    if (minDist <= halfWidthM) {
+      kept.push(poi);
+    } else {
+      dropped.push({ name: poi.name, dist: Math.round(minDist) });
+    }
+  }
+  if (dropped.length) {
+    console.log(
+      `[polylineCorridor] dropped ${dropped.length}:`,
+      dropped.map((d) => `${d.name} — ${d.dist}m from route`).join(" | "),
     );
   }
   return kept;

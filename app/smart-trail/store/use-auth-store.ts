@@ -61,6 +61,7 @@ type AuthStore = {
     input: string,
     config?: AxiosRequestConfig,
   ) => Promise<AxiosResponse>;
+  getValidToken: () => Promise<string>;
 };
 
 export const useAuthStore = create<AuthStore>((set, get) => ({
@@ -237,6 +238,38 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         await get()._clearAuth();
         throw err;
       }
+    }
+  },
+
+  getValidToken: async () => {
+    const stored = await SecureStore.getItemAsync("accessToken");
+    if (!stored) return "";
+    try {
+      const b64 = stored.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      const { exp } = JSON.parse(atob(b64));
+      // Proactively refresh if the token expires within 60 seconds.
+      if (exp * 1000 > Date.now() + 60_000) return stored;
+    } catch {
+      return stored;
+    }
+    const storedRefresh = await SecureStore.getItemAsync("refreshToken");
+    if (!storedRefresh) {
+      await get()._clearAuth();
+      return "";
+    }
+    try {
+      const result = await api.post("/auth/refresh", { refreshToken: storedRefresh });
+      const newToken: string = result.data.data.accessToken;
+      const newRefresh: string = result.data.data.refreshToken;
+      await Promise.all([
+        SecureStore.setItemAsync("accessToken", newToken),
+        SecureStore.setItemAsync("refreshToken", newRefresh),
+      ]);
+      set({ token: newToken });
+      return newToken;
+    } catch {
+      await get()._clearAuth();
+      return "";
     }
   },
 }));

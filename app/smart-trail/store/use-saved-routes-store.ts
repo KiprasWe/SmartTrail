@@ -39,7 +39,6 @@ type SavedRoutesStore = {
       title?: string;
       description?: string;
       isFavorite?: boolean;
-      isPublic?: boolean;
     },
   ) => Promise<void>;
   remove: (id: string) => Promise<void>;

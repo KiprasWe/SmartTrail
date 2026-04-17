@@ -16,28 +16,14 @@ export const Errors = {
 
   INVALID_REQUEST: { code: "INVALID_REQUEST", status: 400 },
 
-  // Social
-  USER_NOT_FOUND: { code: "USER_NOT_FOUND", status: 404 },
-  CANNOT_FOLLOW_SELF: { code: "CANNOT_FOLLOW_SELF", status: 400 },
-  FOLLOW_ALREADY_EXISTS: { code: "FOLLOW_ALREADY_EXISTS", status: 400 },
-  ALREADY_FOLLOWING: { code: "ALREADY_FOLLOWING", status: 400 },
-  FOLLOW_REQUEST_NOT_FOUND: { code: "FOLLOW_REQUEST_NOT_FOUND", status: 404 },
-  NOT_FOLLOWING: { code: "NOT_FOLLOWING", status: 404 },
-  NOT_A_FOLLOWER: { code: "NOT_A_FOLLOWER", status: 404 },
-
   BAD_REQUEST: { code: "BAD_REQUEST", status: 400 },
   EXTERNAL_SERVICE_ERROR: { code: "EXTERNAL_SERVICE_ERROR", status: 502 },
   INTERNAL_SERVER_ERROR: { code: "INTERNAL_SERVER_ERROR", status: 500 },
 
   // Routes
   ROUTE_NOT_FOUND: { code: "ROUTE_NOT_FOUND", status: 404 },
-  VALHALLA_ERROR: { code: "VALHALLA_ERROR", status: 502 },
   AI_GENERATION_FAILED: { code: "AI_GENERATION_FAILED", status: 502 },
   ROUTE_ACCESS_DENIED: { code: "ROUTE_ACCESS_DENIED", status: 403 },
-  ROUTE_NOT_PUBLIC: { code: "ROUTE_NOT_PUBLIC", status: 403 },
-  ROUTE_ALREADY_SAVED: { code: "ROUTE_ALREADY_SAVED", status: 400 },
-  ROUTE_SAVE_NOT_FOUND: { code: "ROUTE_SAVE_NOT_FOUND", status: 404 },
-  CANNOT_SAVE_OWN_ROUTE: { code: "CANNOT_SAVE_OWN_ROUTE", status: 400 },
 };
 
 export const Success = {
@@ -51,20 +37,6 @@ export const Success = {
   PASSWORD_SET: { code: "PASSWORD_SET", status: 200 },
   PASSWORD_CHANGED: { code: "PASSWORD_CHANGED", status: 200 },
 
-  // Social
-  USERS_FETCHED: { code: "USERS_FETCHED", status: 200 },
-  NOW_FOLLOWING: { code: "NOW_FOLLOWING", status: 201 },
-  FOLLOW_REQUEST_SENT: { code: "FOLLOW_REQUEST_SENT", status: 201 },
-  FOLLOW_ACCEPTED: { code: "FOLLOW_ACCEPTED", status: 200 },
-  FOLLOW_REJECTED: { code: "FOLLOW_REJECTED", status: 200 },
-  FOLLOW_CANCELLED: { code: "FOLLOW_CANCELLED", status: 200 },
-  UNFOLLOWED: { code: "UNFOLLOWED", status: 200 },
-  FOLLOWER_REMOVED: { code: "FOLLOWER_REMOVED", status: 200 },
-  FOLLOWERS_FETCHED: { code: "FOLLOWERS_FETCHED", status: 200 },
-  FOLLOWING_FETCHED: { code: "FOLLOWING_FETCHED", status: 200 },
-  FOLLOW_REQUESTS_FETCHED: { code: "FOLLOW_REQUESTS_FETCHED", status: 200 },
-  PROFILE_FETCHED: { code: "PROFILE_FETCHED", status: 200 },
-
   // Routes
   ROUTE_GENERATED: { code: "ROUTE_GENERATED", status: 200 },
   ROUTE_SAVED: { code: "ROUTE_SAVED", status: 201 },
@@ -72,9 +44,6 @@ export const Success = {
   ROUTE_UPDATED: { code: "ROUTE_UPDATED", status: 200 },
   ROUTES_FETCHED: { code: "ROUTES_FETCHED", status: 200 },
   ROUTE_FETCHED: { code: "ROUTE_FETCHED", status: 200 },
-  DISCOVER_FETCHED: { code: "DISCOVER_FETCHED", status: 200 },
-  ROUTE_SAVED_TO_LIST: { code: "ROUTE_SAVED_TO_LIST", status: 201 },
-  ROUTE_UNSAVED_FROM_LIST: { code: "ROUTE_UNSAVED_FROM_LIST", status: 200 },
 };
 
 export const sendError = (res, error, details = {}) => {

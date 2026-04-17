@@ -80,27 +80,10 @@ export const saveRouteSchema = z.object({
   variantLabel: z.string().optional(),
   generationId: z.string().optional(),
   isFavorite: z.boolean().default(false),
-  isPublic: z.boolean().default(false),
-});
-
-// Discover query — used by GET /routes/discover. Everything comes in on the
-// query string so we coerce numeric fields. `radiusKm` is capped at 100 to
-// keep the bounding-box prefilter narrow enough for the index to help.
-export const discoverQuerySchema = z.object({
-  lat: z.coerce.number().gte(-90).lte(90),
-  lng: z.coerce.number().gte(-180).lte(180),
-  radiusKm: z.coerce.number().positive().max(100).default(15),
-  transport: z.string().optional(),
-  minDistanceKm: z.coerce.number().nonnegative().optional(),
-  maxDistanceKm: z.coerce.number().positive().optional(),
-  sort: z.enum(["nearest", "popular"]).default("nearest"),
-  cursor: z.string().optional(),
-  limit: z.coerce.number().int().positive().max(50).default(20),
 });
 
 export const updateRouteSchema = z.object({
   title: z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional(),
   isFavorite: z.boolean().optional(),
-  isPublic: z.boolean().optional(),
 });

@@ -10,10 +10,6 @@ import {
   getSavedRoute,
   updateSavedRoute,
   deleteSavedRoute,
-  discoverRoutes,
-  getPublicRoute,
-  savePublicRoute,
-  unsavePublicRoute,
 } from "../controllers/savedRoutesController.js";
 import { authMiddleware } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
@@ -23,7 +19,6 @@ import {
   aiRouteSchema,
   saveRouteSchema,
   updateRouteSchema,
-  discoverQuerySchema,
 } from "../validators/routeValidators.js";
 
 const router = express.Router();
@@ -53,18 +48,3 @@ router.patch(
 router.delete("/saved/:id", authMiddleware, deleteSavedRoute);
 
 export default router;
-
-// Discover (community routes) — mounted on a separate router in server.js so
-// it isn't subject to the 10/min generateLimiter (browse endpoints get hit on
-// every map pan). Still auth-gated and still under the 100/min global limit.
-export const discoverRouter = express.Router();
-
-discoverRouter.get(
-  "/discover",
-  authMiddleware,
-  validate(discoverQuerySchema, "query"),
-  discoverRoutes,
-);
-discoverRouter.get("/public/:id", authMiddleware, getPublicRoute);
-discoverRouter.post("/public/:id/save", authMiddleware, savePublicRoute);
-discoverRouter.delete("/public/:id/save", authMiddleware, unsavePublicRoute);

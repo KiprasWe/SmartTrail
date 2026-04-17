@@ -38,15 +38,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="discover"
-        options={{
-          title: t("navbar.discover"),
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="compass-outline" size={size} color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="profile"
         options={{
           title: t("navbar.profile"),

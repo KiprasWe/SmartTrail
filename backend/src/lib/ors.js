@@ -41,6 +41,22 @@ export function buildAvoidMultiPolygon(coords, bufferDeg = 0.0006) {
   return { type: "MultiPolygon", coordinates: polys };
 }
 
+// Generate a round-trip loop from a single start point targeting distanceM metres.
+// ORS picks the shape; different seeds produce different circular routes.
+export async function fetchORSRoundTrip(orsProfile, start, distanceM, seed = 0, extraOpts = {}) {
+  return fetchORSDirections(orsProfile, [start], {
+    ...(extraOpts.preference && { preference: extraOpts.preference }),
+    ...(extraOpts.profileParams && { profileParams: extraOpts.profileParams }),
+    options: {
+      round_trip: {
+        length: Math.round(distanceM),
+        points: 5,
+        seed,
+      },
+    },
+  });
+}
+
 export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
   if (!ORS_API_KEY) throw new Error("ORS_API_KEY is not set");
 
@@ -57,6 +73,7 @@ export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
     ...(opts.alternativeRoutes && {
       alternative_routes: opts.alternativeRoutes,
     }),
+    ...(opts.radiuses && { radiuses: opts.radiuses }),
     ...(Object.keys(mergedOptions).length > 0 && { options: mergedOptions }),
   };
 
@@ -123,6 +140,51 @@ export function orsFeatureToRouteData(feature) {
   };
 }
 
+/**
+ * Build ORS request options for the requested elevation preference.
+ *
+ * steepness_difficulty (cycling profiles ONLY):
+ *   0 = novice — penalises steep segments heavily → flattest
+ *   1 = easy
+ *   2 = intermediate
+ *   3 = pro — no penalty → allows steep climbs
+ *
+ * For foot/running profiles ORS ignores steepness_difficulty entirely.
+ * We send no special params for those — elevation selection is handled in
+ * the controller by requesting route alternatives and picking by ascent.
+ *
+ * @param {"flat"|"optimal"|"hilly"|"auto"} elevPref
+ * @param {string} orsProfile  e.g. "foot-hiking", "cycling-road"
+ * @returns {{ preference?: string, profileParams?: object }}
+ */
+export function buildORSElevationOpts(elevPref, orsProfile = "") {
+  const isCycling = orsProfile.startsWith("cycling");
+
+  if (elevPref === "flat") {
+    if (isCycling) {
+      return { profileParams: { weightings: { steepness_difficulty: 0 } } };
+    }
+    // Foot/run: no native flat param — controller picks flattest alternative
+    return {};
+  }
+
+  if (elevPref === "hilly") {
+    if (isCycling) {
+      return { profileParams: { weightings: { steepness_difficulty: 3 } } };
+    }
+    return {};
+  }
+
+  if (elevPref === "optimal") {
+    if (isCycling) {
+      return { profileParams: { weightings: { steepness_difficulty: 1 } } };
+    }
+    return {};
+  }
+
+  return {};
+}
+
 // Fetch elevation for an array of [lng, lat] coords in one ORS elevation/line call.
 // Returns a parallel array of elevation values (metres); falls back to zeros on error.
 // ORS elevation/line has an undocumented ~2000-point limit — inputs larger than
@@ -154,6 +216,72 @@ export async function fetchElevations(coords) {
   } catch {
     return coordsToQuery.map(() => 0);
   }
+}
+
+// Fetch ORS POIs along a route polyline filtered to within bufferM metres.
+// categoryGroupIds: array of ORS category_group_ids (e.g. [330, 620]).
+// Returns raw ORS GeoJSON features.
+// ORS POI API caps geometry at ~73 km². For long routes we chunk the thinned
+// LineString into segments small enough to stay under the limit, then merge.
+const ORS_POI_CHUNK_SIZE = 40; // points per chunk (~safe for routes up to ~150 km)
+
+export async function fetchRoutePois(routeCoords, categoryGroupIds, bufferM = 300) {
+  if (!ORS_API_KEY || !routeCoords?.length || !categoryGroupIds?.length) return [];
+  const thinned = thinCoords(routeCoords, 150);
+
+  // Split into overlapping chunks so we don't miss POIs near chunk boundaries.
+  const chunks = [];
+  for (let i = 0; i < thinned.length; i += ORS_POI_CHUNK_SIZE - 1) {
+    chunks.push(thinned.slice(i, i + ORS_POI_CHUNK_SIZE));
+  }
+
+  const seenIds = new Set();
+  const all = [];
+
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      if (chunk.length < 2) return;
+      try {
+        const res = await fetchWithTimeout(
+          ORS_POIS_URL,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: ORS_API_KEY,
+            },
+            body: JSON.stringify({
+              request: "pois",
+              geometry: {
+                geojson: { type: "LineString", coordinates: chunk },
+                buffer: bufferM,
+              },
+              filters: { category_group_ids: categoryGroupIds },
+              limit: 200,
+            }),
+          },
+          TIMEOUT_ROUTING_MS,
+        );
+        if (!res.ok) {
+          const errText = await res.text().catch(() => "");
+          console.warn(`[ORS POIs] ${res.status}: ${errText}`);
+          return;
+        }
+        const data = await res.json();
+        for (const f of data.features ?? []) {
+          const id = f.properties?.osm_id ?? JSON.stringify(f.geometry?.coordinates);
+          if (!seenIds.has(id)) {
+            seenIds.add(id);
+            all.push(f);
+          }
+        }
+      } catch (err) {
+        console.warn("[ORS POIs] chunk error:", err.message);
+      }
+    }),
+  );
+
+  return all;
 }
 
 // Fetch scenic/natural/touristic POI coords inside a bounding box around center.

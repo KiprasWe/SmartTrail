@@ -8,8 +8,7 @@ import { connectDB, disconnectDB } from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
-import routesRoutes, { discoverRouter } from "./routes/routesRoutes.js";
-import socialRoutes from "./routes/socialRoutes.js";
+import routesRoutes from "./routes/routesRoutes.js";
 import { placePhoto } from "./controllers/savedRoutesController.js";
 
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -73,11 +72,7 @@ app.use("/user", userRoutes(sensitiveOpsLimiter));
 // Photo proxy is mounted outside the generateLimiter — fetching POI thumbnails
 // must not eat into the 10/min route generation budget.
 app.get("/places/photo", placePhoto);
-// Discover endpoints also live outside generateLimiter: browsing public
-// routes on map pan would otherwise starve the generation budget.
-app.use("/routes", discoverRouter);
 app.use("/routes", generateLimiter, routesRoutes);
-app.use("/social", socialRoutes);
 
 app.use(errorHandler);
 

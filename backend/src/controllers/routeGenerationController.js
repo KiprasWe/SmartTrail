@@ -5,28 +5,62 @@ import { sendError, sendSuccess, Errors, Success } from "../utils/responses.js";
 import { PROFILE_CONFIGS } from "../lib/profiles.js";
 import { routeBbox, computeAscentDescent } from "../lib/geo.js";
 import {
-  fetchValhalla,
-  valhallaToRouteData,
-  enrichWithElevation,
-} from "../lib/valhalla.js";
-import {
   fetchORSDirections,
-  buildAvoidMultiPolygon,
+  fetchORSRoundTrip,
   orsFeatureToRouteData,
+  buildORSElevationOpts,
+  fetchRoutePois,
 } from "../lib/ors.js";
-import { fetchPOIsGooglePlaces } from "../lib/places.js";
-import {
-  DETOUR_FACTOR,
-  NUM_BEARINGS,
-  KEEP_TOP_VARIANTS,
-  BUFFER_LADDER,
-  buildPetalWaypoints,
-  computeOverlapRatio,
-  scoreAndPickPetalAnchors,
-  fetchAreaPOIs,
-} from "../lib/loop-algo.js";
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
+
+// ─── ORS POI helpers ──────────────────────────────────────────────────────────
+
+// Valid ORS category_group_ids: 100,120,130,150,160,190,200,220,260,330,360,390,420,560,580,620
+// Max 5 per request — deduplication handled in fetchPoiFeatures.
+const ORS_CATEGORY_GROUP_MAP = {
+  nature:        [330],
+  tourism:       [220, 330],
+  historic:      [220],
+  food:          [100],
+  arts_culture:  [220],
+  leisure:       [620],
+  facilities:    [200],
+  public_places: [200],
+};
+
+function normOrsPoiFeature(feature, idx) {
+  const props = feature.properties ?? {};
+  const coords = feature.geometry?.coordinates;
+  if (!coords) return null;
+  const [lng, lat] = coords;
+  const catEntry = Object.values(props.category_ids ?? {})[0];
+  return {
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [lng, lat] },
+    properties: {
+      id: props.osm_id ?? `ors-${idx}`,
+      name: props.osm_tags?.name || props.name || catEntry?.category_name || null,
+      category: catEntry?.category_name ?? null,
+      rating: null,
+      user_rating_count: null,
+      photo_name: null,
+      editorial_summary: null,
+    },
+  };
+}
+
+async function fetchPoiFeatures(routeCoords, poiTypes) {
+  if (!poiTypes.length) return [];
+  const groupIds = [
+    ...new Set(
+      poiTypes.flatMap((t) => ORS_CATEGORY_GROUP_MAP[t.toLowerCase()] ?? []),
+    ),
+  ].slice(0, 5);
+  if (!groupIds.length) return [];
+  const raw = await fetchRoutePois(routeCoords, groupIds);
+  return raw.map((f, i) => normOrsPoiFeature(f, i)).filter(Boolean);
+}
 
 // ─── A-to-B routing ───────────────────────────────────────────────────────────
 
@@ -68,37 +102,48 @@ export const directRouting = asyncHandler(async (req, res) => {
     });
   }
 
-  const { valhalla: valhallaConfig } = profileConfig;
   const locations = [start, ...waypoints, end];
-
-  // Single Valhalla call with alternates:2 → up to 3 geometrically distinct routes.
-  // Enrich each with real elevation via /height (fallback when elevation_interval
-  // is not populated by the public instance), sort by actual ascent_m, pick best.
-  const wantAlternates =
-    elevationPreference !== "optimal" && waypoints.length === 0;
+  const orsElevOpts = buildORSElevationOpts(elevationPreference, profileConfig.orsProfile);
+  const needsElevPick = elevationPreference === "flat" || elevationPreference === "hilly";
 
   let pickedData;
   try {
-    const json = await fetchValhalla(
-      valhallaConfig.costing,
-      locations,
-      valhallaConfig.options,
-      { alternates: wantAlternates ? 2 : 0 },
-    );
-
-    const trips = [json.trip, ...((json.alternates ?? []).map((a) => a.trip))];
-
-    if (wantAlternates && trips.length > 1) {
-      const allData = await Promise.all(
-        trips.map((trip) => enrichWithElevation(valhallaToRouteData(trip))),
+    // For simple A→B (no intermediate waypoints) with a flat/hilly preference,
+    // request up to 3 alternative routes and pick the one with the least/most
+    // ascent. ORS alternative_routes only works with exactly 2 coordinates.
+    if (waypoints.length === 0 && needsElevPick) {
+      const orsResult = await fetchORSDirections(
+        profileConfig.orsProfile,
+        locations,
+        {
+          ...orsElevOpts,
+          alternativeRoutes: { target_count: 3, weight_factor: 1.6, share_factor: 0.4 },
+        },
       );
-      const sorted = [...allData].sort((a, b) => a.ascent_m - b.ascent_m);
-      if (elevationPreference === "flat") pickedData = sorted[0];
-      else if (elevationPreference === "hilly")
-        pickedData = sorted[sorted.length - 1];
-      else pickedData = sorted[Math.floor(sorted.length / 2)]; // auto → middle
+      const features = orsResult.features ?? [];
+      if (!features.length) throw new Error("ORS returned no route");
+
+      const candidates = features.map((f) => orsFeatureToRouteData(f));
+      pickedData = candidates.reduce((best, c) =>
+        elevationPreference === "flat"
+          ? (c.ascent_m < best.ascent_m ? c : best)
+          : (c.ascent_m > best.ascent_m ? c : best),
+      );
+
+      console.log(
+        `[directRouting] picked ${elevationPreference} from ${candidates.length} alternatives — ` +
+        `ascents: ${candidates.map((c) => c.ascent_m + "m").join(" / ")} → chose ${pickedData.ascent_m}m`,
+      );
     } else {
-      pickedData = await enrichWithElevation(valhallaToRouteData(json.trip));
+      // With waypoints or optimal/auto: single route with ORS elevation opts
+      const orsResult = await fetchORSDirections(
+        profileConfig.orsProfile,
+        locations,
+        orsElevOpts,
+      );
+      const features = orsResult.features ?? [];
+      if (!features.length) throw new Error("ORS returned no route");
+      pickedData = orsFeatureToRouteData(features[0]);
     }
   } catch (err) {
     return sendError(res, {
@@ -110,7 +155,7 @@ export const directRouting = asyncHandler(async (req, res) => {
   const { coords, elevArr, ascent_m, descent_m, maneuvers, distance_km, duration_s } =
     pickedData;
 
-  const pois = await fetchPOIsGooglePlaces(coords, poiTypes);
+  const pois = await fetchPoiFeatures(coords, poiTypes);
 
   const route = {
     label: "recommended",
@@ -137,11 +182,12 @@ export const directRouting = asyncHandler(async (req, res) => {
 
 // ─── Loop (round-trip) routing ────────────────────────────────────────────────
 //
-// No waypoints: petal algorithm builds teardrop loops in NUM_BEARINGS compass
-// directions, routes each one as outbound + return with corridor exclusion,
-// scores self-overlap, and returns the best variants.
+// No waypoints: ORS round_trip option — targets the requested distance directly
+// and generates a circular route. Multiple seeds explored in parallel; the
+// result closest to the target distance is returned.
 //
-// Waypoints provided: ORS routes start→stops, then returns with alternatives.
+// Waypoints provided: routed as a single closed polygon [start → stops → start].
+// Distance is determined by the stops the user chose.
 
 export const loopRouting = asyncHandler(async (req, res) => {
   const {
@@ -168,135 +214,6 @@ export const loopRouting = asyncHandler(async (req, res) => {
     });
   }
 
-  // ── Branch: waypoints provided → ORS Directions ──────────────────────────────
-  if (waypoints.length > 0) {
-    const orsProfile = profileConfig.orsProfile;
-    if (!ORS_API_KEY) {
-      return sendError(res, {
-        ...Errors.EXTERNAL_SERVICE_ERROR,
-        message: "ORS_API_KEY is not configured",
-      });
-    }
-
-    const lastWaypoint = waypoints[waypoints.length - 1];
-
-    let outboundFeature;
-    try {
-      const outboundJson = await fetchORSDirections(orsProfile, [start, ...waypoints]);
-      outboundFeature = outboundJson.features?.[0];
-      if (!outboundFeature) throw new Error("ORS returned no outbound feature");
-    } catch (err) {
-      return sendError(res, {
-        ...Errors.EXTERNAL_SERVICE_ERROR,
-        message: `Outbound routing failed: ${err.message}`,
-      });
-    }
-    const outboundData = orsFeatureToRouteData(outboundFeature);
-
-    const RETURN_BUFFER_LADDER = [0.0015, 0.001, 0.0006, 0.0003, 0];
-    let returnFeatures = [];
-    let lastErr = null;
-    for (const bufferDeg of RETURN_BUFFER_LADDER) {
-      try {
-        const avoidPolys =
-          bufferDeg > 0
-            ? buildAvoidMultiPolygon(outboundData.coords, bufferDeg)
-            : null;
-        const returnJson = await fetchORSDirections(
-          orsProfile,
-          [lastWaypoint, start],
-          {
-            alternativeRoutes: {
-              target_count: 3,
-              share_factor: 0.4,
-              weight_factor: 2.0,
-            },
-            ...(avoidPolys && { options: { avoid_polygons: avoidPolys } }),
-          },
-        );
-        returnFeatures = returnJson.features ?? [];
-        if (returnFeatures.length) break;
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-
-    if (!returnFeatures.length) {
-      return sendError(res, {
-        ...Errors.EXTERNAL_SERVICE_ERROR,
-        message: `Return routing failed: ${lastErr?.message ?? "no alternatives"}`,
-      });
-    }
-
-    const variants = await Promise.all(
-      returnFeatures.map(async (retFeat) => {
-        const ret = orsFeatureToRouteData(retFeat);
-        const coords = [...outboundData.coords, ...ret.coords.slice(1)];
-        const elev = [...outboundData.elevArr, ...ret.elevArr.slice(1)];
-        const maneuvers = [...outboundData.maneuvers, ...ret.maneuvers];
-        const distance_km = +(outboundData.distance_km + ret.distance_km).toFixed(2);
-        const duration_s = outboundData.duration_s + ret.duration_s;
-        const ascent_m = outboundData.ascent_m + ret.ascent_m;
-        const descent_m = outboundData.descent_m + ret.descent_m;
-        const pois = await fetchPOIsGooglePlaces(coords, poiTypes);
-
-        return {
-          label: "loop",
-          description: "Loop route",
-          profile: profileConfig.label,
-          distance_km,
-          duration_s,
-          ascent_m,
-          descent_m,
-          geometry: { type: "LineString", coordinates: coords },
-          bbox: routeBbox(coords),
-          elevation_profile: elev,
-          maneuvers,
-          pois,
-          poi_routed: false,
-        };
-      }),
-    );
-
-    if (elevationPreference === "flat") {
-      variants.sort((a, b) => a.ascent_m - b.ascent_m);
-      variants.forEach((r, i) => {
-        r.label = ["flattest", "alternative", "scenic"][i] ?? `alt_${i}`;
-        r.description =
-          ["Flattest loop", "Alternative loop", "Scenic loop"][i] ??
-          "Alternative loop";
-      });
-    } else if (elevationPreference === "hilly") {
-      variants.sort((a, b) => b.ascent_m - a.ascent_m);
-      variants.forEach((r, i) => {
-        r.label = ["hilliest", "moderate", "scenic"][i] ?? `alt_${i}`;
-        r.description =
-          ["Most elevation gain", "Moderate elevation", "Scenic loop"][i] ??
-          "Alternative loop";
-      });
-    } else {
-      variants.forEach((r, i) => {
-        r.label = ["balanced", "alternative", "scenic"][i] ?? `alt_${i}`;
-        r.description =
-          ["Balanced loop", "Alternative loop", "Scenic loop"][i] ??
-          "Alternative loop";
-      });
-    }
-
-    console.log(
-      `[loopRouting waypoints] returned ${variants.length} ORS variants — distances: ${variants.map((v) => v.distance_km).join(", ")} km`,
-    );
-
-    return sendSuccess(res, Success.ROUTE_GENERATED, {
-      profile,
-      elevation_preference: elevationPreference,
-      poi_types_requested: poiTypes,
-      routes: variants,
-    });
-  }
-
-  // ── No waypoints → petal algorithm ──────────────────────────────────────────
-
   if (!ORS_API_KEY) {
     return sendError(res, {
       ...Errors.EXTERNAL_SERVICE_ERROR,
@@ -304,228 +221,107 @@ export const loopRouting = asyncHandler(async (req, res) => {
     });
   }
 
-  const detour = DETOUR_FACTOR[profile] ?? 1.35;
   const orsProfile = profileConfig.orsProfile;
+  const orsElevOpts = buildORSElevationOpts(elevationPreference, orsProfile);
 
-  const bearings = Array.from(
-    { length: NUM_BEARINGS },
-    (_, i) => (i * 360) / NUM_BEARINGS,
-  );
-  const rawPetals = bearings.map((bearing) =>
-    buildPetalWaypoints(start, distance, bearing, detour),
-  );
+  // ── With waypoints: single closed-loop call through user's stops ─────────────
+  if (waypoints.length > 0) {
+    let routeData;
+    try {
+      const orsResult = await fetchORSDirections(
+        orsProfile,
+        [start, ...waypoints, start],
+        orsElevOpts,
+      );
+      const feat = orsResult.features?.[0];
+      if (!feat) throw new Error("ORS returned no route");
+      routeData = orsFeatureToRouteData(feat);
+    } catch (err) {
+      return sendError(res, {
+        ...Errors.EXTERNAL_SERVICE_ERROR,
+        message: `Loop routing failed: ${err.message}`,
+      });
+    }
 
-  const areaRadius = (distance / detour) * 0.5;
-  let areaPOIs = [];
-  try {
-    areaPOIs = await fetchAreaPOIs(start, areaRadius);
-  } catch {
-    areaPOIs = [];
-  }
-
-  let petals;
-  try {
-    petals = await Promise.all(
-      rawPetals.map((p) =>
-        scoreAndPickPetalAnchors(p, areaPOIs, elevationPreference),
-      ),
+    const pois = await fetchPoiFeatures(routeData.coords, poiTypes);
+    console.log(
+      `[loopRouting waypoints] distance=${routeData.distance_km} km ascent=${routeData.ascent_m} m`,
     );
-  } catch (err) {
-    return sendError(res, {
-      ...Errors.EXTERNAL_SERVICE_ERROR,
-      message: `Loop waypoint generation failed: ${err.message}`,
+
+    return sendSuccess(res, Success.ROUTE_GENERATED, {
+      profile,
+      elevation_preference: elevationPreference,
+      poi_types_requested: poiTypes,
+      routes: [
+        {
+          label: "loop",
+          description: "Loop route",
+          profile: profileConfig.label,
+          distance_km: routeData.distance_km,
+          duration_s: routeData.duration_s,
+          ascent_m: routeData.ascent_m,
+          descent_m: routeData.descent_m,
+          geometry: { type: "LineString", coordinates: routeData.coords },
+          bbox: routeBbox(routeData.coords),
+          elevation_profile: routeData.elevArr,
+          maneuvers: routeData.maneuvers,
+          pois,
+        },
+      ],
     });
   }
 
-  console.log(
-    `[loopRouting] generated ${petals.length} petals for distance=${distance}m profile=${profile}`,
+  // ── No waypoints: ORS round_trip, multiple seeds → pick closest to target ────
+  const SEEDS = [0, 1, 2, 3, 4];
+  const results = await Promise.allSettled(
+    SEEDS.map((seed) => fetchORSRoundTrip(orsProfile, start, distance, seed, orsElevOpts)),
   );
 
-  async function routePetal(petal) {
-    const outboundLocs = [start, petal.outbound, petal.apexOut, petal.apexRet];
-    const returnLocs = [petal.apexRet, petal.return, start];
+  const candidates = results
+    .filter((r) => r.status === "fulfilled")
+    .flatMap((r) => r.value.features ?? [])
+    .map((f) => orsFeatureToRouteData(f))
+    .filter((c) => c.distance_km > 0);
 
-    let outboundData;
-    try {
-      const outJson = await fetchORSDirections(orsProfile, outboundLocs);
-      const feat = outJson.features?.[0];
-      if (!feat) throw new Error("ORS returned no outbound feature");
-      outboundData = orsFeatureToRouteData(feat);
-    } catch (err) {
-      throw new Error(`outbound leg failed: ${err.message}`);
-    }
-
-    for (const bufferDeg of BUFFER_LADDER) {
-      try {
-        const avoidPolys =
-          bufferDeg > 0
-            ? buildAvoidMultiPolygon(outboundData.coords, bufferDeg)
-            : null;
-        const retJson = await fetchORSDirections(orsProfile, returnLocs, {
-          ...(avoidPolys && { options: { avoid_polygons: avoidPolys } }),
-        });
-        const retFeat = retJson.features?.[0];
-        if (!retFeat) continue;
-        const returnData = orsFeatureToRouteData(retFeat);
-        const overlap_ratio = computeOverlapRatio(
-          outboundData.coords,
-          returnData.coords,
-          25,
-        );
-        return { outboundData, returnData, overlap_ratio };
-      } catch {
-        // Try next buffer width.
-      }
-    }
-    throw new Error("all buffer ladder attempts failed");
-  }
-
-  const routeResults = await Promise.allSettled(
-    petals.map((petal) => routePetal(petal)),
-  );
-  const successful = routeResults
-    .map((r, i) => ({ r, petal: petals[i] }))
-    .filter(({ r }) => r.status === "fulfilled");
-
-  if (!successful.length) {
-    const msg = routeResults.find((r) => r.status === "rejected")?.reason?.message;
+  if (!candidates.length) {
+    const err = results.find((r) => r.status === "rejected")?.reason;
     return sendError(res, {
       ...Errors.EXTERNAL_SERVICE_ERROR,
-      message: `All loop variants failed: ${msg}`,
+      message: `Loop generation failed: ${err?.message ?? "ORS returned no routes"}`,
     });
   }
 
   const targetKm = distance / 1000;
-
-  function toCandidateObject({ outboundData, returnData, overlap_ratio }) {
-    const coords = [...outboundData.coords, ...returnData.coords.slice(1)];
-    const elevArr = [...outboundData.elevArr, ...returnData.elevArr.slice(1)];
-    const maneuvers = [...outboundData.maneuvers, ...returnData.maneuvers];
-    const distance_km = +(outboundData.distance_km + returnData.distance_km).toFixed(2);
-    const duration_s = outboundData.duration_s + returnData.duration_s;
-    const { ascent_m, descent_m } = computeAscentDescent(elevArr);
-    const distanceError = Math.abs(distance_km - targetKm) / targetKm;
-    return {
-      coords,
-      elevArr,
-      maneuvers,
-      distance_km,
-      duration_s,
-      ascent_m,
-      descent_m,
-      overlap_ratio,
-      distanceError,
-      compositeScore: 0.6 * overlap_ratio + 0.4 * distanceError,
-    };
-  }
-
-  let candidates = successful
-    .map(({ r }) => toCandidateObject(r.value))
-    .filter((c) => c.distanceError <= 0.35)
-    .sort((a, b) => a.compositeScore - b.compositeScore)
-    .slice(0, KEEP_TOP_VARIANTS);
-
-  // ── Adaptive retry ────────────────────────────────────────────────────────────
-  if (candidates.length > 0 && candidates.every((c) => c.overlap_ratio > 0.65)) {
-    console.log(
-      `[loopRouting] all ${candidates.length} candidates have overlap > 0.65, retrying with deltaDeg=55`,
-    );
-    try {
-      const wideRawPetals = bearings.map((b) =>
-        buildPetalWaypoints(start, distance, b, detour, 55),
-      );
-      const widePetals = await Promise.all(
-        wideRawPetals.map((p) =>
-          scoreAndPickPetalAnchors(p, areaPOIs, elevationPreference),
-        ),
-      );
-      const wideResults = await Promise.allSettled(
-        widePetals.map((petal) => routePetal(petal)),
-      );
-      const wideSuccessful = wideResults
-        .filter((r) => r.status === "fulfilled")
-        .map((r) => toCandidateObject(r.value))
-        .filter((c) => c.distanceError <= 0.35);
-
-      if (wideSuccessful.length) {
-        const merged = [...candidates, ...wideSuccessful];
-        merged.sort((a, b) => a.compositeScore - b.compositeScore);
-        candidates = merged.slice(0, KEEP_TOP_VARIANTS);
-        console.log(
-          `[loopRouting] after wide retry — best overlap: ${candidates[0].overlap_ratio.toFixed(2)}`,
-        );
-      }
-    } catch (err) {
-      console.warn(`[loopRouting] wide retry failed: ${err.message}`);
-    }
-  }
-
-  if (!candidates.length) {
-    // Fallback: use lowest-overlap regardless of distance.
-    const fallback = successful
-      .map(({ r }) => {
-        const { outboundData, returnData, overlap_ratio } = r.value;
-        const coords = [...outboundData.coords, ...returnData.coords.slice(1)];
-        const elevArr = [...outboundData.elevArr, ...returnData.elevArr.slice(1)];
-        const maneuvers = [...outboundData.maneuvers, ...returnData.maneuvers];
-        const distance_km = +(outboundData.distance_km + returnData.distance_km).toFixed(2);
-        const duration_s = outboundData.duration_s + returnData.duration_s;
-        const { ascent_m, descent_m } = computeAscentDescent(elevArr);
-        return { coords, elevArr, maneuvers, distance_km, duration_s, ascent_m, descent_m, overlap_ratio };
-      })
-      .sort((a, b) => a.overlap_ratio - b.overlap_ratio)
-      .slice(0, KEEP_TOP_VARIANTS);
-    candidates.push(...fallback);
-  }
+  const best = candidates.sort(
+    (a, b) =>
+      Math.abs(a.distance_km - targetKm) - Math.abs(b.distance_km - targetKm),
+  )[0];
 
   console.log(
-    `[loopRouting] kept ${candidates.length} variants — overlaps: ${candidates.map((c) => c.overlap_ratio.toFixed(2)).join(", ")}`,
+    `[loopRouting] best — distance=${best.distance_km} km (target ${targetKm} km) ascent=${best.ascent_m} m`,
   );
 
-  const routes = await Promise.all(
-    candidates.map(async (c, idx) => {
-      const pois = await fetchPOIsGooglePlaces(c.coords, poiTypes);
-      return {
-        label: `loop_${idx}`,
-        description: "Loop route",
-        profile: profileConfig.label,
-        distance_km: c.distance_km,
-        duration_s: c.duration_s,
-        ascent_m: c.ascent_m,
-        descent_m: c.descent_m,
-        geometry: { type: "LineString", coordinates: c.coords },
-        bbox: routeBbox(c.coords),
-        elevation_profile: c.elevArr,
-        maneuvers: c.maneuvers,
-        pois,
-        overlap_ratio: +c.overlap_ratio.toFixed(3),
-      };
-    }),
-  );
-
-  if (elevationPreference === "flat") {
-    routes.sort((a, b) => a.ascent_m - b.ascent_m);
-    routes.forEach((r, i) => {
-      r.label = ["flattest", "alternative", "scenic"][i];
-      r.description = ["Flattest loop", "Alternative loop", "Scenic loop"][i];
-    });
-  } else if (elevationPreference === "hilly") {
-    routes.sort((a, b) => b.ascent_m - a.ascent_m);
-    routes.forEach((r, i) => {
-      r.label = ["hilliest", "moderate", "scenic"][i];
-      r.description = ["Most elevation gain", "Moderate elevation", "Scenic loop"][i];
-    });
-  } else {
-    routes.forEach((r, i) => {
-      r.label = ["balanced", "alternative", "scenic"][i];
-      r.description = ["Balanced loop", "Alternative loop", "Scenic loop"][i];
-    });
-  }
+  const pois = await fetchPoiFeatures(best.coords, poiTypes);
 
   return sendSuccess(res, Success.ROUTE_GENERATED, {
     profile,
     elevation_preference: elevationPreference,
     poi_types_requested: poiTypes,
-    routes,
+    routes: [
+      {
+        label: "loop",
+        description: "Loop route",
+        profile: profileConfig.label,
+        distance_km: best.distance_km,
+        duration_s: best.duration_s,
+        ascent_m: best.ascent_m,
+        descent_m: best.descent_m,
+        geometry: { type: "LineString", coordinates: best.coords },
+        bbox: routeBbox(best.coords),
+        elevation_profile: best.elevArr,
+        maneuvers: best.maneuvers,
+        pois,
+      },
+    ],
   });
 });

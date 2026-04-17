@@ -21,16 +21,33 @@ export interface GpxRouteInput {
 }
 
 function escapeXml(str: string): string {
-  return str.replace(/[<>&'"]/g, (c) =>
-    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c] ?? c),
+  return str.replace(
+    /[<>&'"]/g,
+    (c) =>
+      ({
+        "<": "&lt;",
+        ">": "&gt;",
+        "&": "&amp;",
+        "'": "&apos;",
+        '"': "&quot;",
+      })[c] ?? c,
   );
 }
 
-function buildGpx({ title, coordinates, startLat, startLng, waypoints }: GpxRouteInput): string {
+function buildGpx({
+  title,
+  coordinates,
+  startLat,
+  startLng,
+  waypoints,
+}: GpxRouteInput): string {
   const safeName = escapeXml(title);
 
   const trkpts = coordinates
-    .map(([lng, lat]) => `    <trkpt lat="${lat.toFixed(7)}" lon="${lng.toFixed(7)}"/>`)
+    .map(
+      ([lng, lat]) =>
+        `    <trkpt lat="${lat.toFixed(7)}" lon="${lng.toFixed(7)}"/>`,
+    )
     .join("\n");
 
   const wpts = (waypoints ?? [])
@@ -63,37 +80,49 @@ ${trkpts}
 </gpx>`;
 }
 
-function safeFilename(title: string): string {
-  return title
-    .replace(/[^a-zA-Z0-9_\-\s]/g, "")
-    .trim()
-    .replace(/\s+/g, "_")
-    .slice(0, 40) || "route";
+function safeFilename(name: string): string {
+  return (
+    name
+      .replace(/[^a-zA-Z0-9_\-\s]/g, "")
+      .trim()
+      .replace(/\s+/g, "_")
+      .slice(0, 60) || "route"
+  );
 }
 
-export async function shareGpx(input: GpxRouteInput): Promise<void> {
+export class ExportCancelledError extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "ExportCancelledError";
+  }
+}
+
+export async function exportGpx(
+  input: GpxRouteInput,
+  filenameOverride?: string,
+): Promise<void> {
   if (!input.coordinates || input.coordinates.length === 0) {
     throw new Error("Route has no coordinates.");
   }
 
   const gpxContent = buildGpx(input);
-  const filename = `${safeFilename(input.title)}.gpx`;
+  const rawName = filenameOverride?.trim() || safeFilename(input.title);
+  const filename = rawName.endsWith(".gpx") ? rawName : `${rawName}.gpx`;
 
-  // SDK 54 / expo-file-system v19+ new API
+  // Write to cache, then open the native share sheet.
+  // On Android the user can save to Downloads, Drive, etc.
+  // On iOS they get Files, AirDrop, etc.
   const file = new File(Paths.cache, filename);
-
-  // Delete any stale file from a previous export with the same name
-  if (file.exists) {
-    file.delete();
-  }
+  if (file.exists) file.delete();
   file.create();
   file.write(gpxContent);
 
-  // isAvailableAsync returns false on some Android emulators but
-  // shareAsync itself still works — just attempt it regardless.
+  const available = await Sharing.isAvailableAsync();
+  if (!available) throw new Error("Sharing is not available on this device.");
+
   await Sharing.shareAsync(file.uri, {
     mimeType: "application/gpx+xml",
-    dialogTitle: `Export "${input.title}"`,
-    UTI: "com.topografix.gpx", // iOS only, ignored on Android
+    UTI: "public.gpx",
+    dialogTitle: `Save ${filename}`,
   });
 }

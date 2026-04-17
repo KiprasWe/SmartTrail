@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   StatusBar,
   StyleSheet,
   ActivityIndicator,
+  Alert,
   useColorScheme,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -16,19 +17,14 @@ import { useAuthStore } from "@/store/use-auth-store";
 import { useProfileStore } from "@/store/use-profile-store";
 import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
 import { Ionicons } from "@expo/vector-icons";
-import { useSocial } from "@/hooks/use-social";
 import { Colors } from "@/constants/theme";
 import { useTranslation } from "@/hooks/use-translation";
 import type { SavedRouteListItem } from "@/types/route";
 import { RoutePreview } from "@/components/saved-routes/route-preview";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   TabScreenHeader,
   mainTabHeaderIconHitStyle,
 } from "@/components/ui/tab-screen-header";
-
-const socialStatsStorageKey = (userId: string) =>
-  `smarttrail_social_stats_${userId}`;
 
 const AVATAR_PLACEHOLDER = (name: string) =>
   `https://ui-avatars.com/api/?background=16A34A&color=fff&size=256&bold=true&name=${encodeURIComponent(name)}`;
@@ -55,8 +51,6 @@ const TRANSPORT_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
 };
 
 export default function ProfileScreen() {
-  const { authFetch } = useAuthStore();
-  const authUserId = useAuthStore((s) => s.user?.id);
   const { profile, loading, error, fetchProfile } = useProfileStore();
   const scheme = useColorScheme() ?? "light";
   const isDark = scheme === "dark";
@@ -64,104 +58,50 @@ export default function ProfileScreen() {
   const { t } = useTranslation();
   const router = useRouter();
 
-  const { getFollowers, getFollowing, getFollowRequests } =
-    useSocial(authFetch);
-
   const savedRoutes = useSavedRoutesStore((s) => s.routes);
   const savedRoutesLoading = useSavedRoutesStore((s) => s.loading);
   const bootstrapSavedRoutes = useSavedRoutesStore((s) => s.bootstrap);
   const refreshSavedRoutes = useSavedRoutesStore((s) => s.refresh);
+  const removeRoute = useSavedRoutesStore((s) => s.remove);
 
-  const [socialStats, setSocialStats] = useState({
-    followers: 0,
-    following: 0,
-    requests: 0,
-  });
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Show last-known follower counts immediately (network refresh runs on focus).
-  useEffect(() => {
-    if (!authUserId) return;
-    let cancelled = false;
-    AsyncStorage.getItem(socialStatsStorageKey(authUserId)).then((raw) => {
-      if (cancelled || !raw) return;
-      try {
-        const parsed = JSON.parse(raw) as {
-          followers?: unknown;
-          following?: unknown;
-          requests?: unknown;
-        };
-        if (
-          typeof parsed.followers === "number" &&
-          typeof parsed.following === "number" &&
-          typeof parsed.requests === "number"
-        ) {
-          setSocialStats({
-            followers: parsed.followers,
-            following: parsed.following,
-            requests: parsed.requests,
-          });
-        }
-      } catch {
-        /* ignore */
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [authUserId]);
-
-  const fetchStats = useCallback(() => {
-    const uid = authUserId ?? profile?.id;
-    if (!uid) return;
-    let cancelled = false;
-    Promise.all([
-      getFollowers(uid),
-      getFollowing(uid),
-      getFollowRequests(),
-    ])
-      .then(([followers, following, requests]) => {
-        if (cancelled) return;
-        const next = {
-          followers: followers.length,
-          following: following.length,
-          requests: requests.length,
-        };
-        setSocialStats(next);
-        AsyncStorage.setItem(
-          socialStatsStorageKey(uid),
-          JSON.stringify(next),
-        ).catch(() => {});
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    authUserId,
-    profile?.id,
-    getFollowers,
-    getFollowing,
-    getFollowRequests,
-  ]);
+  const handleDelete = useCallback(
+    (id: string, title: string) => {
+      Alert.alert(
+        t("profile.delete-route-title"),
+        t("profile.delete-route-body", { title }),
+        [
+          { text: t("common.cancel"), style: "cancel" },
+          {
+            text: t("common.delete"),
+            style: "destructive",
+            onPress: async () => {
+              setDeletingId(id);
+              try {
+                await removeRoute(id);
+              } catch {
+                Alert.alert(t("common.error"), t("profile.delete-route-error"));
+              } finally {
+                setDeletingId(null);
+              }
+            },
+          },
+        ],
+      );
+    },
+    [removeRoute, t],
+  );
 
   useFocusEffect(
     useCallback(() => {
       fetchProfile();
-      fetchStats();
-      // First visit hydrates from AsyncStorage + background refresh;
-      // subsequent focuses just re-fetch from the server.
       if (savedRoutes.length === 0) {
         bootstrapSavedRoutes();
       } else {
         refreshSavedRoutes().catch(() => {});
       }
-    }, [
-      fetchProfile,
-      fetchStats,
-      bootstrapSavedRoutes,
-      refreshSavedRoutes,
-      savedRoutes.length,
-    ]),
+    }, [fetchProfile, bootstrapSavedRoutes, refreshSavedRoutes, savedRoutes.length]),
   );
 
   if (loading && !profile) {
@@ -202,15 +142,6 @@ export default function ProfileScreen() {
         title={t("profile.profile-title")}
         right={
           <View style={styles.headerBtns}>
-            <TouchableOpacity
-              onPress={() => router.push("/search-users")}
-              style={[
-                mainTabHeaderIconHitStyle.base,
-                { backgroundColor: ts.surface, borderColor: ts.border },
-              ]}
-            >
-              <Ionicons name="search-outline" size={16} color={ts.muted} />
-            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => router.push("/edit-profile")}
               style={[
@@ -255,79 +186,6 @@ export default function ProfileScreen() {
           ) : null}
         </View>
 
-        {/* Social stats */}
-        <View
-          style={[
-            styles.statsRow,
-            { borderTopColor: ts.border, borderBottomColor: ts.border },
-          ]}
-        >
-          <TouchableOpacity
-            style={styles.statItem}
-            onPress={() => {
-              if (!profile?.id) return;
-              router.push({
-                pathname: "/follow-list",
-                params: { type: "followers", userId: profile.id },
-              });
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.statCount, { color: ts.text }]}>
-              {socialStats.followers}
-            </Text>
-            <Text style={[styles.statLabel, { color: ts.muted }]}>
-              {t("social.followers")}
-            </Text>
-          </TouchableOpacity>
-
-          <View style={[styles.statDivider, { backgroundColor: ts.border }]} />
-
-          <TouchableOpacity
-            style={styles.statItem}
-            onPress={() => {
-              if (!profile?.id) return;
-              router.push({
-                pathname: "/follow-list",
-                params: { type: "following", userId: profile.id },
-              });
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.statCount, { color: ts.text }]}>
-              {socialStats.following}
-            </Text>
-            <Text style={[styles.statLabel, { color: ts.muted }]}>
-              {t("social.following")}
-            </Text>
-          </TouchableOpacity>
-
-          {socialStats.requests > 0 && (
-            <>
-              <View
-                style={[styles.statDivider, { backgroundColor: ts.border }]}
-              />
-              <TouchableOpacity
-                style={styles.statItem}
-                onPress={() => router.push("/follow-requests")}
-                activeOpacity={0.7}
-              >
-                <View style={styles.requestsRow}>
-                  <Text style={[styles.statCount, { color: ts.tint }]}>
-                    {socialStats.requests}
-                  </Text>
-                  <View
-                    style={[styles.requestsDot, { backgroundColor: ts.tint }]}
-                  />
-                </View>
-                <Text style={[styles.statLabel, { color: ts.muted }]}>
-                  {t("social.requests")}
-                </Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-
         {/* Saved routes */}
         <View style={styles.savedSection}>
           <Text style={[styles.sectionTitle, { color: ts.text }]}>
@@ -357,57 +215,70 @@ export default function ProfileScreen() {
             <View style={{ gap: 10 }}>
               {savedRoutes.map((r: SavedRouteListItem) => {
                 const icon = TRANSPORT_ICON[r.transport] ?? "map-outline";
+                const isDeleting = deletingId === r.id;
                 return (
-                  <TouchableOpacity
+                  <View
                     key={r.id}
-                    activeOpacity={0.8}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/route-map",
-                        params: { savedId: r.id },
-                      })
-                    }
                     style={[
                       styles.savedCard,
                       { backgroundColor: ts.surface, borderColor: ts.border },
                     ]}
                   >
-                    <RoutePreview
-                      coords={r.thumbnail}
-                      bbox={r.bbox}
-                      width={64}
-                      height={52}
-                      color={ts.tint}
-                      backgroundColor={ts.bg}
-                    />
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text
-                        style={[styles.savedCardTitle, { color: ts.text }]}
-                        numberOfLines={1}
-                      >
-                        {r.title}
-                      </Text>
-                      <View style={styles.savedCardMetaRow}>
-                        <Ionicons name={icon} size={12} color={ts.muted} />
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/route-map",
+                          params: { savedId: r.id },
+                        })
+                      }
+                      style={styles.savedCardBody}
+                    >
+                      <RoutePreview
+                        coords={r.thumbnail}
+                        bbox={r.bbox}
+                        width={64}
+                        height={52}
+                        color={ts.tint}
+                        backgroundColor={ts.bg}
+                      />
+                      <View style={{ flex: 1, minWidth: 0 }}>
                         <Text
-                          style={[styles.savedCardMeta, { color: ts.muted }]}
+                          style={[styles.savedCardTitle, { color: ts.text }]}
                           numberOfLines={1}
                         >
-                          {formatDistance(r.distance)} ·{" "}
-                          {formatDuration(r.duration)}
-                          {r.ascent != null ? ` · ↑${r.ascent} m` : ""}
+                          {r.title}
                         </Text>
+                        <View style={styles.savedCardMetaRow}>
+                          <Ionicons name={icon} size={12} color={ts.muted} />
+                          <Text
+                            style={[styles.savedCardMeta, { color: ts.muted }]}
+                            numberOfLines={1}
+                          >
+                            {formatDistance(r.distance)} ·{" "}
+                            {formatDuration(r.duration)}
+                            {r.ascent != null ? ` · ↑${r.ascent} m` : ""}
+                          </Text>
+                        </View>
                       </View>
-                    </View>
-                    {r.isFavorite && (
-                      <Ionicons name="star" size={16} color={ts.tint} />
-                    )}
-                    <Ionicons
-                      name="chevron-forward"
-                      size={18}
-                      color={ts.muted}
-                    />
-                  </TouchableOpacity>
+                      {r.isFavorite && (
+                        <Ionicons name="star" size={16} color={ts.tint} />
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={() => handleDelete(r.id, r.title)}
+                      disabled={isDeleting}
+                      hitSlop={8}
+                      style={styles.deleteBtn}
+                    >
+                      {isDeleting ? (
+                        <ActivityIndicator size="small" color={ts.muted} />
+                      ) : (
+                        <Ionicons name="trash-outline" size={18} color={ts.muted} />
+                      )}
+                    </TouchableOpacity>
+                  </View>
                 );
               })}
             </View>
@@ -450,30 +321,6 @@ const styles = StyleSheet.create({
   email: { fontSize: 14 },
   bio: { fontSize: 14, textAlign: "center", lineHeight: 20, marginTop: 4 },
 
-  statsRow: {
-    flexDirection: "row",
-    marginHorizontal: 20,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    marginBottom: 24,
-  },
-  statItem: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 14,
-    gap: 2,
-  },
-  statCount: { fontSize: 18, fontWeight: "700", letterSpacing: -0.3 },
-  statLabel: { fontSize: 11, fontWeight: "500", letterSpacing: 0.2 },
-  statDivider: { width: StyleSheet.hairlineWidth, marginVertical: 10 },
-  requestsRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  requestsDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginTop: 2,
-  },
-
   // Saved routes section
   savedSection: {
     paddingHorizontal: 20,
@@ -498,11 +345,23 @@ const styles = StyleSheet.create({
   savedCard: {
     flexDirection: "row",
     alignItems: "center",
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  savedCardBody: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
     paddingVertical: 12,
     paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
+  },
+  deleteBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
   },
   savedCardTitle: { fontSize: 14, fontWeight: "700", letterSpacing: -0.1 },
   savedCardMeta: { fontSize: 12, flexShrink: 1 },

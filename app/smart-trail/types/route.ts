@@ -6,7 +6,7 @@ export type RouteMode = "A_TO_B" | "LOOP" | "AI";
 
 // ── Route sub-types ──────────────────────────────────────────────────────────
 
-/** One turn-by-turn step returned by Valhalla or ORS. */
+/** One turn-by-turn step returned by ORS. */
 export interface RouteInstruction {
   /** Human-readable instruction string, e.g. "Turn left onto Main St". */
   instruction: string;
@@ -70,8 +70,6 @@ export interface SavedRouteListItem {
   endLabel: string | null;
   variantLabel: string | null;
   isFavorite: boolean;
-  isPublic: boolean;
-  saveCount?: number;
   createdAt: string;
   updatedAt: string;
   // Simplified polyline for list thumbnails (~64 points, same bbox as the full route)
@@ -113,5 +111,4 @@ export interface SaveRouteInput {
   variantLabel?: string;
   generationId?: string;
   isFavorite?: boolean;
-  isPublic?: boolean;
 }

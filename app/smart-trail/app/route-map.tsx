@@ -1,4 +1,10 @@
-import React, { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+} from "react";
 import {
   View,
   Text,
@@ -17,7 +23,6 @@ import {
   Modal,
   TextInput,
   KeyboardAvoidingView,
-  Switch,
 } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +33,7 @@ import {
   ShapeSource,
   LineLayer,
   CircleLayer,
+  SymbolLayer,
   UserLocation,
   setAccessToken,
   type CameraRef,
@@ -42,7 +48,7 @@ import type { WeatherSnapshot } from "@/types/weather";
 import i18n from "@/lib/i18n";
 import { useTranslation } from "@/hooks/use-translation";
 import type { RouteMode, SaveRouteInput } from "@/types/route";
-import { shareGpx } from "@/lib/gpx-export";
+import { exportGpx, ExportCancelledError } from "@/lib/gpx-export";
 
 setAccessToken(null);
 
@@ -82,6 +88,7 @@ interface Poi {
     google_maps_uri?: string | null;
     editorial_summary?: string | null;
     photo_name?: string | null;
+    essential?: boolean | null;
   };
 }
 
@@ -167,9 +174,9 @@ const CATEGORY_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
 // Builds a URL pointing at our backend's Google Places photo proxy. The proxy
 // resolves the photoName to the actual image and 302-redirects, so RN's <Image>
 // just follows it transparently. The API key never touches the client.
-function placePhotoUrl(photoName: string, height = 400, width = 400) {
+function placePhotoUrl(photoName: string) {
   const base = process.env.EXPO_PUBLIC_API_URL;
-  return `${base}/places/photo?name=${encodeURIComponent(photoName)}&maxHeight=${height}&maxWidth=${width}`;
+  return `${base}/places/photo?name=${encodeURIComponent(photoName)}`;
 }
 
 async function openExternal(url?: string | null) {
@@ -211,7 +218,8 @@ export default function RouteMapScreen() {
     [params.payload],
   );
   const genParams = useMemo(
-    () => (params.genParams ? (JSON.parse(params.genParams) as GenParams) : null),
+    () =>
+      params.genParams ? (JSON.parse(params.genParams) as GenParams) : null,
     [params.genParams],
   );
   // If opened from a saved-route card, resolve the payload asynchronously
@@ -223,6 +231,7 @@ export default function RouteMapScreen() {
   const [routes, setRoutes] = useState<RouteVariant[]>(payload?.routes ?? []);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [waypoints, setWaypoints] = useState<Coords[]>([]);
+  const [waypointPois, setWaypointPois] = useState<Poi[]>([]);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [showPois, setShowPois] = useState(false);
   const [mapReady, setMapReady] = useState(false);
@@ -236,63 +245,55 @@ export default function RouteMapScreen() {
   const [saveDescription, setSaveDescription] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportFilename, setExportFilename] = useState("");
 
-  const handleExportGpx = useCallback(async () => {
+  const openExportDialog = useCallback(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    setExportFilename(`route_${today}`);
+    setExportDialogOpen(true);
+  }, []);
+
+  const handleConfirmExport = useCallback(async () => {
     const route = routes[selectedIndex];
     if (!route) return;
+    setExportDialogOpen(false);
     setIsExporting(true);
     try {
-      const gpxWaypoints = (route.pois ?? [])
-        .filter((p) => p.properties.name)
-        .map((p) => ({
-          name: p.properties.name!,
-          lat: p.geometry.coordinates[1],
-          lng: p.geometry.coordinates[0],
-          description: p.properties.ai_description ?? p.properties.editorial_summary ?? p.properties.category ?? undefined,
-        }));
+      const today = new Date().toISOString().slice(0, 10);
+      const filename = exportFilename.trim() || `route_${today}`;
+      const gpxWaypoints = routePois.map((p) => ({
+        name: p.properties.name!,
+        lat: p.geometry.coordinates[1],
+        lng: p.geometry.coordinates[0],
+        description:
+          p.properties.ai_description ??
+          p.properties.editorial_summary ??
+          p.properties.category ??
+          undefined,
+      }));
 
-      await shareGpx({
-        title: saveTitle || route.label || "SmartTrail Route",
-        coordinates: route.geometry.coordinates as [number, number][],
-        startLat: route.geometry.coordinates[0][1],
-        startLng: route.geometry.coordinates[0][0],
-        waypoints: gpxWaypoints.length > 0 ? gpxWaypoints : undefined,
-      });
+      await exportGpx(
+        {
+          title: filename,
+          coordinates: route.geometry.coordinates as [number, number][],
+          startLat: route.geometry.coordinates[0][1],
+          startLng: route.geometry.coordinates[0][0],
+          waypoints: gpxWaypoints.length > 0 ? gpxWaypoints : undefined,
+        },
+        filename,
+      );
+      Alert.alert(tr("route-map.export-gpx"), tr("route-map.export-gpx-success"));
     } catch (err) {
+      if (err instanceof ExportCancelledError) return;
       console.error("[GPX export]", err);
       Alert.alert(tr("route-map.export-gpx"), tr("route-map.export-gpx-error"));
     } finally {
       setIsExporting(false);
     }
-  }, [routes, selectedIndex, saveTitle, tr]);
+  }, [routes, selectedIndex, exportFilename, routePois, tr]);
 
-  const handleNavigateToStart = useCallback(async () => {
-    const route = routes[selectedIndex];
-    if (!route) return;
-    const [startLng, startLat] = route.geometry.coordinates[0];
-    // Use geo: URI on Android (opens any navigation app via intent),
-    // maps: URI on iOS (opens Apple Maps; Google Maps also registers for it).
-    const url = Platform.OS === "android"
-      ? `geo:${startLat},${startLng}?q=${startLat},${startLng}`
-      : `maps://?daddr=${startLat},${startLng}`;
-    try {
-      const supported = await Linking.canOpenURL(url);
-      if (supported) {
-        await Linking.openURL(url);
-      } else {
-        // Fallback: Google Maps universal web URL works on both platforms
-        await Linking.openURL(
-          `https://www.google.com/maps/dir/?api=1&destination=${startLat},${startLng}`,
-        );
-      }
-    } catch {
-      Alert.alert(tr("route-map.navigate-to-start"), tr("route-map.navigate-to-start-error"));
-    }
-  }, [routes, selectedIndex, tr]);
 
-  // Whether the user wants this route published to the Discover feed.
-  // Default false — sharing is explicit and opt-in per route.
-  const [saveIsPublic, setSaveIsPublic] = useState(false);
   const [savedRouteId, setSavedRouteId] = useState<string | null>(
     params.savedId ?? null,
   );
@@ -320,7 +321,10 @@ export default function RouteMapScreen() {
         const pub = data.data.route;
         if (!pub) {
           setLoadingSaved(false);
-          Alert.alert(tr("route-map.route-not-found"), tr("route-map.route-unavailable"));
+          Alert.alert(
+            tr("route-map.route-not-found"),
+            tr("route-map.route-unavailable"),
+          );
           return;
         }
         const variantShape: RouteVariant = {
@@ -371,7 +375,10 @@ export default function RouteMapScreen() {
       if (cancelled) return;
       if (!saved) {
         setLoadingSaved(false);
-        Alert.alert(tr("route-map.route-not-found"), tr("route-map.saved-route-unavailable"));
+        Alert.alert(
+          tr("route-map.route-not-found"),
+          tr("route-map.saved-route-unavailable"),
+        );
         return;
       }
       // Build a single-variant Payload the rest of the screen can consume.
@@ -412,10 +419,33 @@ export default function RouteMapScreen() {
     [variant],
   );
 
+  // POIs that are actually part of the route — used for GPX export and DB save.
+  // Saved/public routes: all stored pois (already filtered at save time).
+  // AI mode: essential pois + any optional ones the user toggled on.
+  // Manual modes: only pois the user explicitly added as waypoints (by object, not coords).
+  const routePois = useMemo(() => {
+    if (!genParams) {
+      return (variant?.pois ?? []).filter((p) => p.properties.name);
+    }
+    if (genParams.mode === "ai") {
+      const essential = (variant?.pois ?? []).filter(
+        (p) => p.properties.essential === true && p.properties.name,
+      );
+      const essentialIds = new Set(essential.map((p) => p.properties.id));
+      const toggled = waypointPois.filter(
+        (p) => !essentialIds.has(p.properties.id) && p.properties.name,
+      );
+      return [...essential, ...toggled];
+    }
+    return waypointPois.filter((p) => p.properties.name);
+  }, [variant, waypointPois, genParams]);
+
   const isWaypoint = useCallback(
     (poi: Poi) =>
       waypoints.some(
-        (w) => w[0] === poi.geometry.coordinates[0] && w[1] === poi.geometry.coordinates[1],
+        (w) =>
+          w[0] === poi.geometry.coordinates[0] &&
+          w[1] === poi.geometry.coordinates[1],
       ),
     [waypoints],
   );
@@ -431,6 +461,11 @@ export default function RouteMapScreen() {
         : [...waypoints, coords];
 
       setWaypoints(newWaypoints);
+      setWaypointPois((prev) =>
+        removing
+          ? prev.filter((p) => p.properties.id !== poi.properties.id)
+          : [...prev, poi],
+      );
       setIsRegenerating(true);
 
       try {
@@ -453,9 +488,41 @@ export default function RouteMapScreen() {
         });
 
         const json = await res.json();
-        if (!res.ok || json.status !== "success") throw new Error(json.message ?? "Failed");
+        if (!res.ok || json.status !== "success")
+          throw new Error(json.message ?? "Failed");
 
         const newRoute: RouteVariant = json.data.routes[0];
+
+        // For AI routes, merge previous POIs back in so optional markers don't
+        // disappear when the pipeline re-runs with a new forced waypoint.
+        // New POIs take priority (they carry updated essential flags); old POIs
+        // that weren't returned are appended as map-only markers.
+        if (genParams.mode === "ai" && variant) {
+          const poiKey = (p: Poi) =>
+            p.properties.place_id ??
+            `${p.geometry.coordinates[0].toFixed(5)},${p.geometry.coordinates[1].toFixed(5)}`;
+
+          const newKeys = new Set((newRoute.pois ?? []).map(poiKey));
+
+          const survivingOld = (variant.pois ?? []).filter(
+            (p) => !newKeys.has(poiKey(p)),
+          );
+
+          const merged = [
+            ...(newRoute.pois ?? []),
+            ...survivingOld.map((p, i) => ({
+              ...p,
+              properties: {
+                ...p.properties,
+                id: (newRoute.pois?.length ?? 0) + i,
+                essential: false,
+              },
+            })),
+          ];
+
+          newRoute.pois = merged;
+        }
+
         setRoutes((prev) => {
           const next = [...prev];
           next[selectedIndex] = newRoute;
@@ -465,7 +532,10 @@ export default function RouteMapScreen() {
         fittedVariantRef.current = -1;
       } catch (e: any) {
         setWaypoints(waypoints); // revert
-        Alert.alert(tr("common.error"), e.message ?? tr("route-map.load-error"));
+        Alert.alert(
+          tr("common.error"),
+          e.message ?? tr("route-map.load-error"),
+        );
       } finally {
         setIsRegenerating(false);
       }
@@ -507,12 +577,11 @@ export default function RouteMapScreen() {
         startLng: genParams.start[0],
         endLat: genParams.end?.[1],
         endLng: genParams.end?.[0],
-        pois: variant.pois ?? undefined,
+        pois: routePois.length > 0 ? routePois : undefined,
         variantLabel: variant.label,
-        isPublic: saveIsPublic,
       };
     },
-    [variant, genParams, saveIsPublic],
+    [variant, genParams, routePois],
   );
 
   // Pre-fill the title with something sensible when the modal opens.
@@ -529,7 +598,6 @@ export default function RouteMapScreen() {
         : `${prettyProfile} · ${km} km`;
     setSaveTitle(defaultTitle);
     setSaveDescription("");
-    setSaveIsPublic(false); // Default to private — sharing is explicit per route
     setSaveModalOpen(true);
   }, [variant, genParams]);
 
@@ -537,7 +605,10 @@ export default function RouteMapScreen() {
     const payload = buildSavePayload(saveTitle, saveDescription);
     if (!payload) return;
     if (!payload.title) {
-      Alert.alert(tr("route-map.title-required"), tr("route-map.title-required-body"));
+      Alert.alert(
+        tr("route-map.title-required"),
+        tr("route-map.title-required-body"),
+      );
       return;
     }
     setIsSaving(true);
@@ -657,12 +728,13 @@ export default function RouteMapScreen() {
           {tr("route-map.no-route")}
         </Text>
         <TouchableOpacity onPress={() => router.back()} style={styles.backLink}>
-          <Text style={{ color: t.tint, fontWeight: "600" }}>{tr("route-map.go-back")}</Text>
+          <Text style={{ color: t.tint, fontWeight: "600" }}>
+            {tr("route-map.go-back")}
+          </Text>
         </TouchableOpacity>
       </View>
     );
   }
-
 
   return (
     <View style={styles.root}>
@@ -713,7 +785,10 @@ export default function RouteMapScreen() {
               const found = pois.find(
                 (p) => p.properties.id === f.properties?.id,
               );
-              if (found) setSelectedPoi(found);
+              if (found) {
+                setSelectedPoi(found);
+                cameraRef.current?.flyTo(found.geometry.coordinates, 400);
+              }
             }}
           >
             <CircleLayer
@@ -723,6 +798,20 @@ export default function RouteMapScreen() {
                 circleColor: "#F59E0B",
                 circleStrokeWidth: 2.5,
                 circleStrokeColor: "#ffffff",
+              }}
+            />
+            <SymbolLayer
+              id="pois-label-layer"
+              style={{
+                textField: "{name}",
+                textFont: ["Noto Sans Regular"],
+                textSize: 11,
+                textOffset: [0, 1.6],
+                textAnchor: "top",
+                textColor: "#1a1a1a",
+                textHaloColor: "#ffffff",
+                textHaloWidth: 2,
+                textOptional: true,
               }}
             />
           </ShapeSource>
@@ -779,25 +868,16 @@ export default function RouteMapScreen() {
             </TouchableOpacity>
           )}
 
-          {/* Navigate to start */}
-          <TouchableOpacity
-            style={[styles.iconBtn, { backgroundColor: t.bg }]}
-            onPress={handleNavigateToStart}
-            disabled={routes.length === 0}
-          >
-            <Ionicons name="navigate-outline" size={20} color={t.tint} />
-          </TouchableOpacity>
-
           {/* Export GPX */}
           <TouchableOpacity
             style={[styles.iconBtn, { backgroundColor: t.bg }]}
-            onPress={handleExportGpx}
+            onPress={openExportDialog}
             disabled={isExporting || routes.length === 0}
           >
             {isExporting ? (
               <ActivityIndicator size="small" color={t.tint} />
             ) : (
-              <Ionicons name="share-outline" size={20} color={t.tint} />
+              <Ionicons name="download-outline" size={20} color={t.tint} />
             )}
           </TouchableOpacity>
         </View>
@@ -823,7 +903,7 @@ export default function RouteMapScreen() {
             const description =
               props.editorial_summary ?? props.ai_description ?? null;
             const photoUri = props.photo_name
-              ? placePhotoUrl(props.photo_name, 320, 640)
+              ? placePhotoUrl(props.photo_name)
               : null;
 
             return (
@@ -922,33 +1002,17 @@ export default function RouteMapScreen() {
                 {/* Address */}
                 {props.formatted_address && (
                   <View style={styles.poiInfoRow}>
-                    <Ionicons name="location-outline" size={14} color={t.muted} />
+                    <Ionicons
+                      name="location-outline"
+                      size={14}
+                      color={t.muted}
+                    />
                     <Text
                       style={[styles.poiInfoText, { color: t.muted }]}
                       numberOfLines={2}
                     >
                       {props.formatted_address}
                     </Text>
-                  </View>
-                )}
-
-                {/* Distance from route — only for ORS-discovered POIs */}
-                {!isAi && (
-                  <View style={[styles.poiMeta, { borderTopColor: t.border }]}>
-                    <View style={styles.poiMetaItem}>
-                      <Ionicons
-                        name="navigate-outline"
-                        size={14}
-                        color={t.muted}
-                      />
-                      <Text style={[styles.poiMetaText, { color: t.muted }]}>
-                        {tr("route-map.from-route", {
-                          distance: formatDist(
-                            (props.distance_from_route ?? 0) / 1000,
-                          ),
-                        })}
-                      </Text>
-                    </View>
                   </View>
                 )}
 
@@ -968,9 +1032,7 @@ export default function RouteMapScreen() {
                         activeOpacity={0.75}
                       >
                         <Ionicons name="map-outline" size={15} color={t.tint} />
-                        <Text
-                          style={[styles.poiLinkText, { color: t.tint }]}
-                        >
+                        <Text style={[styles.poiLinkText, { color: t.tint }]}>
                           {tr("route-map.open-in-maps")}
                         </Text>
                       </TouchableOpacity>
@@ -987,10 +1049,12 @@ export default function RouteMapScreen() {
                         onPress={() => openExternal(props.website_uri)}
                         activeOpacity={0.75}
                       >
-                        <Ionicons name="globe-outline" size={15} color={t.tint} />
-                        <Text
-                          style={[styles.poiLinkText, { color: t.tint }]}
-                        >
+                        <Ionicons
+                          name="globe-outline"
+                          size={15}
+                          color={t.tint}
+                        />
+                        <Text style={[styles.poiLinkText, { color: t.tint }]}>
                           {tr("route-map.website")}
                         </Text>
                       </TouchableOpacity>
@@ -998,8 +1062,7 @@ export default function RouteMapScreen() {
                   </View>
                 )}
 
-                {/* Add/Remove waypoint — only for non-AI POIs (AI POIs are
-                    already routed through, so toggling them doesn't apply) */}
+                {/* Waypoint toggle button */}
                 {genParams && !isAi && (
                   <TouchableOpacity
                     style={[
@@ -1031,9 +1094,7 @@ export default function RouteMapScreen() {
                               : "add-circle-outline"
                           }
                           size={16}
-                          color={
-                            isWaypoint(selectedPoi) ? t.danger : t.tint
-                          }
+                          color={isWaypoint(selectedPoi) ? t.danger : t.tint}
                         />
                         <Text
                           style={[
@@ -1052,6 +1113,81 @@ export default function RouteMapScreen() {
                       </>
                     )}
                   </TouchableOpacity>
+                )}
+
+                {/* AI mode: add optional POIs to route, or show "on route" for essential ones */}
+                {genParams && isAi && (
+                  props.essential ? (
+                    <View
+                      style={[
+                        styles.waypointBtn,
+                        {
+                          backgroundColor: t.tint + "15",
+                          borderColor: t.tint,
+                          opacity: 0.7,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="checkmark-circle-outline"
+                        size={16}
+                        color={t.tint}
+                      />
+                      <Text style={[styles.waypointBtnText, { color: t.tint }]}>
+                        {tr("route-map.on-route")}
+                      </Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[
+                        styles.waypointBtn,
+                        {
+                          backgroundColor: isWaypoint(selectedPoi)
+                            ? t.danger + "15"
+                            : t.tint + "15",
+                          borderColor: isWaypoint(selectedPoi)
+                            ? t.danger
+                            : t.tint,
+                        },
+                      ]}
+                      onPress={() => handleToggleWaypoint(selectedPoi)}
+                      disabled={isRegenerating}
+                      activeOpacity={0.75}
+                    >
+                      {isRegenerating ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={isWaypoint(selectedPoi) ? t.danger : t.tint}
+                        />
+                      ) : (
+                        <>
+                          <Ionicons
+                            name={
+                              isWaypoint(selectedPoi)
+                                ? "remove-circle-outline"
+                                : "add-circle-outline"
+                            }
+                            size={16}
+                            color={isWaypoint(selectedPoi) ? t.danger : t.tint}
+                          />
+                          <Text
+                            style={[
+                              styles.waypointBtnText,
+                              {
+                                color: isWaypoint(selectedPoi)
+                                  ? t.danger
+                                  : t.tint,
+                              },
+                            ]}
+                          >
+                            {isWaypoint(selectedPoi)
+                              ? tr("route-map.remove-from-route")
+                              : tr("route-map.add-to-route")}
+                          </Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )
                 )}
               </ScrollView>
             );
@@ -1094,6 +1230,7 @@ export default function RouteMapScreen() {
                 onPress={() => {
                   setSelectedPoi(poi);
                   setShowPois(false);
+                  cameraRef.current?.flyTo(poi.geometry.coordinates, 400);
                 }}
               >
                 <View
@@ -1180,6 +1317,24 @@ export default function RouteMapScreen() {
                   />
                   <Text style={[styles.statValue, { color: t.text }]}>
                     {variant.ascent_m} m
+                  </Text>
+                </View>
+              </>
+            )}
+
+            {variant.descent_m > 0 && (
+              <>
+                <View
+                  style={[styles.statDivider, { backgroundColor: t.border }]}
+                />
+                <View style={styles.stat}>
+                  <Ionicons
+                    name="trending-down-outline"
+                    size={14}
+                    color={t.muted}
+                  />
+                  <Text style={[styles.statValue, { color: t.text }]}>
+                    {variant.descent_m} m
                   </Text>
                 </View>
               </>
@@ -1273,7 +1428,9 @@ export default function RouteMapScreen() {
               {tr("route-map.save-modal-subtitle")}
             </Text>
 
-            <Text style={[styles.modalLabel, { color: t.muted }]}>{tr("route-map.save-modal-title-label")}</Text>
+            <Text style={[styles.modalLabel, { color: t.muted }]}>
+              {tr("route-map.save-modal-title-label")}
+            </Text>
             <TextInput
               value={saveTitle}
               onChangeText={setSaveTitle}
@@ -1311,35 +1468,15 @@ export default function RouteMapScreen() {
               ]}
             />
 
-            {/* Share publicly toggle — opt-in per route. When on, this route
-                appears in the Discover feed for users near the start point. */}
-            <View style={styles.publicToggleRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.publicToggleLabel, { color: t.text }]}>
-                  {tr("route-map.save-modal-share-label")}
-                </Text>
-                <Text
-                  style={[styles.publicToggleHint, { color: t.muted }]}
-                  numberOfLines={2}
-                >
-                  {tr("route-map.save-modal-share-hint")}
-                </Text>
-              </View>
-              <Switch
-                value={saveIsPublic}
-                onValueChange={setSaveIsPublic}
-                trackColor={{ false: t.border, true: t.tint }}
-                thumbColor="#fff"
-              />
-            </View>
-
             <View style={styles.modalActions}>
               <TouchableOpacity
                 style={[styles.modalBtn, { borderColor: t.border }]}
                 onPress={() => setSaveModalOpen(false)}
                 disabled={isSaving}
               >
-                <Text style={{ color: t.text, fontWeight: "600" }}>{tr("common.cancel")}</Text>
+                <Text style={{ color: t.text, fontWeight: "600" }}>
+                  {tr("common.cancel")}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
@@ -1353,8 +1490,76 @@ export default function RouteMapScreen() {
                 {isSaving ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={{ color: "#fff", fontWeight: "700" }}>{tr("common.save")}</Text>
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>
+                    {tr("common.save")}
+                  </Text>
                 )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ── Export GPX dialog ── */}
+      <Modal
+        visible={exportDialogOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !isExporting && setExportDialogOpen(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => !isExporting && setExportDialogOpen(false)}
+          />
+          <View style={[styles.modalCard, { backgroundColor: t.bg, borderColor: t.border }]}>
+            <Text style={[styles.modalTitle, { color: t.text }]}>
+              {tr("route-map.export-gpx")}
+            </Text>
+            <Text style={[styles.modalSubtitle, { color: t.muted }]}>
+              {tr("route-map.export-gpx-subtitle")}
+            </Text>
+
+            <Text style={[styles.modalLabel, { color: t.muted }]}>
+              {tr("route-map.export-gpx-filename-label")}
+            </Text>
+            <TextInput
+              value={exportFilename}
+              onChangeText={setExportFilename}
+              placeholder={`route_${new Date().toISOString().slice(0, 10)}`}
+              placeholderTextColor={t.muted}
+              maxLength={80}
+              autoCapitalize="none"
+              style={[
+                styles.modalInput,
+                { color: t.text, backgroundColor: t.surface, borderColor: t.border },
+              ]}
+            />
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { borderColor: t.border }]}
+                onPress={() => setExportDialogOpen(false)}
+              >
+                <Text style={{ color: t.text, fontWeight: "600" }}>
+                  {tr("common.cancel")}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  { backgroundColor: t.tint, borderColor: t.tint },
+                ]}
+                onPress={handleConfirmExport}
+              >
+                <Text style={{ color: "#fff", fontWeight: "700" }}>
+                  {tr("route-map.export-gpx-confirm")}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1467,7 +1672,7 @@ const styles = StyleSheet.create({
   },
   poiPhoto: {
     width: "100%",
-    height: 180,
+    aspectRatio: 4 / 3,
     backgroundColor: "#00000010",
   },
   poiPhotoClose: {
@@ -1614,20 +1819,6 @@ const styles = StyleSheet.create({
   modalInputMultiline: {
     minHeight: 72,
     textAlignVertical: "top",
-  },
-  publicToggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginTop: 14,
-  },
-  publicToggleLabel: {
-    fontSize: 14,
-    fontWeight: "700",
-  },
-  publicToggleHint: {
-    fontSize: 12,
-    marginTop: 2,
   },
   modalActions: {
     flexDirection: "row",

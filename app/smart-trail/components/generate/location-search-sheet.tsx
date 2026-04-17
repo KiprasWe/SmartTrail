@@ -37,7 +37,6 @@ function photonLang(): string {
 interface LocationSearchSheetProps {
   visible: boolean;
   placeholder?: string;
-  /** Current user GPS coords for search bias + "Use my location" */
   userCoords?: { lat: number; lng: number } | null;
   onSelect: (location: ResolvedLocation) => void;
   onClose: () => void;
@@ -83,7 +82,7 @@ export function LocationSearchSheet({
         if (pos) {
           setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         }
-      }).catch(() => {});
+      }).catch(() => { });
     } else {
       Keyboard.dismiss();
       Animated.timing(slideAnim, {
@@ -103,7 +102,6 @@ export function LocationSearchSheet({
     [search, gpsCoords, userCoords],
   );
 
-  // ── Use my location (dismiss keyboard first so the tap isn’t eaten on Android) ──
   const handleUseMyLocation = useCallback(async () => {
     Keyboard.dismiss();
     setLocating(true);
@@ -177,7 +175,7 @@ export function LocationSearchSheet({
           )}
         </View>
         <Text style={[styles.myLocationLabel, { color: ts.tint }]}>
-          {locating ? "Getting location…" : "Use my location"}
+          {locating ? i18n.t("generate.getting-location") : i18n.t("generate.use-my-location")}
         </Text>
       </TouchableOpacity>
     ),
@@ -205,116 +203,116 @@ export function LocationSearchSheet({
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         pointerEvents="box-none"
       >
-      <Animated.View
-        style={[
-          styles.sheet,
-          {
-            backgroundColor: ts.bg,
-            paddingBottom: insets.bottom + 16,
-            transform: [{ translateY: slideAnim }],
-          },
-        ]}
-      >
-        <View style={styles.handleWrap}>
-          <View style={[styles.handle, { backgroundColor: ts.border }]} />
-        </View>
-
-        <View
+        <Animated.View
           style={[
-            styles.searchBar,
-            { backgroundColor: ts.surface, borderColor: ts.border },
+            styles.sheet,
+            {
+              backgroundColor: ts.bg,
+              paddingBottom: insets.bottom + 16,
+              transform: [{ translateY: slideAnim }],
+            },
           ]}
         >
-          <Ionicons name="search-outline" size={18} color={ts.muted} />
-          <TextInput
-            ref={inputRef}
-            style={[styles.searchInput, { color: ts.text }]}
-            placeholder={placeholder}
-            placeholderTextColor={ts.muted}
-            value={query}
-            onChangeText={handleChangeText}
-            autoCorrect={false}
-            autoCapitalize="none"
-            returnKeyType="search"
-          />
-          {loading ? (
-            <ActivityIndicator size="small" color={ts.muted} />
-          ) : query.length > 0 ? (
-            <TouchableOpacity
-              onPress={() => {
-                setQuery("");
-                clearResults();
-              }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="close-circle" size={18} color={ts.muted} />
-            </TouchableOpacity>
-          ) : null}
-        </View>
+          <View style={styles.handleWrap}>
+            <View style={[styles.handle, { backgroundColor: ts.border }]} />
+          </View>
 
-        <FlatList
-          data={results}
-          keyExtractor={(item) => item.id}
-          keyboardShouldPersistTaps="always"
-          keyboardDismissMode="on-drag"
-          ListHeaderComponent={myLocationHeader}
-          style={styles.resultsList}
-          renderItem={({ item, index }) => (
-            <TouchableOpacity
-              style={[
-                styles.resultRow,
-                {
-                  borderBottomColor: ts.border,
-                  borderBottomWidth:
-                    index < results.length - 1 ? StyleSheet.hairlineWidth : 0,
-                },
-              ]}
-              onPress={() => handleSelect(item)}
-              activeOpacity={0.6}
-            >
-              <View
-                style={[
-                  styles.resultIcon,
-                  { backgroundColor: ts.surface, borderColor: ts.border },
-                ]}
+          <View
+            style={[
+              styles.searchBar,
+              { backgroundColor: ts.surface, borderColor: ts.border },
+            ]}
+          >
+            <Ionicons name="search-outline" size={18} color={ts.muted} />
+            <TextInput
+              ref={inputRef}
+              style={[styles.searchInput, { color: ts.text }]}
+              placeholder={placeholder}
+              placeholderTextColor={ts.muted}
+              value={query}
+              onChangeText={handleChangeText}
+              autoCorrect={false}
+              autoCapitalize="none"
+              returnKeyType="search"
+            />
+            {loading ? (
+              <ActivityIndicator size="small" color={ts.muted} />
+            ) : query.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => {
+                  setQuery("");
+                  clearResults();
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="location-outline" size={14} color={ts.muted} />
-              </View>
-              <View style={styles.resultText}>
-                <Text
-                  style={[styles.resultLabel, { color: ts.text }]}
-                  numberOfLines={1}
+                <Ionicons name="close-circle" size={18} color={ts.muted} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <FlatList
+            data={results}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="on-drag"
+            ListHeaderComponent={myLocationHeader}
+            style={styles.resultsList}
+            renderItem={({ item, index }) => (
+              <TouchableOpacity
+                style={[
+                  styles.resultRow,
+                  {
+                    borderBottomColor: ts.border,
+                    borderBottomWidth:
+                      index < results.length - 1 ? StyleSheet.hairlineWidth : 0,
+                  },
+                ]}
+                onPress={() => handleSelect(item)}
+                activeOpacity={0.6}
+              >
+                <View
+                  style={[
+                    styles.resultIcon,
+                    { backgroundColor: ts.surface, borderColor: ts.border },
+                  ]}
                 >
-                  {item.label}
-                </Text>
-                {item.sublabel ? (
+                  <Ionicons name="location-outline" size={14} color={ts.muted} />
+                </View>
+                <View style={styles.resultText}>
                   <Text
-                    style={[styles.resultSublabel, { color: ts.muted }]}
+                    style={[styles.resultLabel, { color: ts.text }]}
                     numberOfLines={1}
                   >
-                    {item.sublabel}
+                    {item.label}
                   </Text>
-                ) : null}
-              </View>
-            </TouchableOpacity>
-          )}
-          ListEmptyComponent={
-            showEmptyState ? (
-              <View style={styles.emptyState}>
-                <Ionicons
-                  name="search-outline"
-                  size={32}
-                  color={ts.muted}
-                  style={{ opacity: 0.4 }}
-                />
-                <Text style={[styles.emptyText, { color: ts.muted }]}>
-                  No results for &quot;{query}&quot;
-                </Text>
-              </View>
-            ) : null
-          }
-        />
-      </Animated.View>
+                  {item.sublabel ? (
+                    <Text
+                      style={[styles.resultSublabel, { color: ts.muted }]}
+                      numberOfLines={1}
+                    >
+                      {item.sublabel}
+                    </Text>
+                  ) : null}
+                </View>
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={
+              showEmptyState ? (
+                <View style={styles.emptyState}>
+                  <Ionicons
+                    name="search-outline"
+                    size={32}
+                    color={ts.muted}
+                    style={{ opacity: 0.4 }}
+                  />
+                  <Text style={[styles.emptyText, { color: ts.muted }]}>
+                    No results for &quot;{query}&quot;
+                  </Text>
+                </View>
+              ) : null
+            }
+          />
+        </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );

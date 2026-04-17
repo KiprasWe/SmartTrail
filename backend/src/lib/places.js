@@ -1,19 +1,89 @@
 // lib/places.js — Google Places API helpers + Photon geocoding
 //
-// fetchPOIsGooglePlaces — route-level POI search (A-to-B and Loop modes)
-// reverseGeocodePlaceName / forwardGeocode — Photon OSM geocoding
-// searchPlacesByIntent / searchPlacesForAllIntents — AI mode intent-driven search
+// fetchPOIsGooglePlaces     — route-level POI search (A-to-B and Loop modes)
+// reverseGeocodePlaceName   — Photon OSM reverse geocoding
+// forwardGeocode            — Photon OSM forward geocoding
+// searchPlacesByIntent /
+// searchPlacesForAllIntents — AI mode: intent-driven text search (fallback)
+// fetchPlaceById /
+// fetchPlacesByIds          — AI mode: authoritative details by place ID
 
 import { fetchWithTimeout } from "../utils/http.js";
 import { haversineM, minDistToRoute, bboxFromCenter, bboxFromCorridor } from "./geo.js";
 
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
+
 export const GOOGLE_PLACES_TEXT_SEARCH_URL =
   "https://places.googleapis.com/v1/places:searchText";
+const GOOGLE_PLACES_DETAILS_BASE =
+  "https://places.googleapis.com/v1/places";
 
 const TIMEOUT_PLACES_MS = 15_000;
 
-// ─── Route-level POI fetch (standard A-to-B and Loop routes) ──────────────────
+// ─── Field masks ──────────────────────────────────────────────────────────────
+
+// Text-search endpoint uses `places.<field>` prefix.
+export const PLACES_FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.location",
+  "places.rating",
+  "places.userRatingCount",
+  "places.websiteUri",
+  "places.googleMapsUri",
+  "places.types",
+  "places.primaryType",
+  "places.editorialSummary",
+  "places.photos",
+].join(",");
+
+// Details endpoint uses bare field names (no `places.` prefix).
+const PLACE_DETAILS_FIELD_MASK = [
+  "id",
+  "displayName",
+  "formattedAddress",
+  "location",
+  "rating",
+  "userRatingCount",
+  "websiteUri",
+  "googleMapsUri",
+  "types",
+  "primaryType",
+  "editorialSummary",
+  "photos",
+].join(",");
+
+// ─── Internal normalization ───────────────────────────────────────────────────
+
+// Shared shape for a normalized POI. Used by both text-search and details paths.
+function normalizePlaceDetails(place, intent = "") {
+  if (
+    place?.location?.latitude == null ||
+    place?.location?.longitude == null
+  ) {
+    return null;
+  }
+  return {
+    name: place.displayName?.text ?? "Unnamed place",
+    lat: place.location.latitude,
+    lng: place.location.longitude,
+    description: place.editorialSummary?.text ?? intent,
+    place_id: place.id ?? null,
+    formatted_address: place.formattedAddress ?? null,
+    rating: place.rating ?? null,
+    user_rating_count: place.userRatingCount ?? null,
+    website_uri: place.websiteUri ?? null,
+    google_maps_uri: place.googleMapsUri ?? null,
+    types: place.types ?? [],
+    primary_type: place.primaryType ?? null,
+    editorial_summary: place.editorialSummary?.text ?? null,
+    photo_name: place.photos?.[0]?.name ?? null,
+    _intent: intent,
+  };
+}
+
+// ─── Route-level POI fetch (standard A-to-B and Loop routes) ─────────────────
 
 export const POI_PLACES_CONFIG = {
   nature:        { query: "nature park viewpoint waterfall",  type: "park" },
@@ -33,7 +103,6 @@ export async function fetchPOIsGooglePlaces(routeCoords, poiTypes) {
     return [];
   }
 
-  // Bounding box from route coords + ~500 m buffer.
   const BUFFER_DEG = 0.005;
   const lngs = routeCoords.map((c) => c[0]);
   const lats = routeCoords.map((c) => c[1]);
@@ -50,7 +119,6 @@ export async function fetchPOIsGooglePlaces(routeCoords, poiTypes) {
     },
   };
 
-  // One Places text search per POI type, in parallel.
   const results = await Promise.allSettled(
     poiTypes.map(async (type) => {
       const config = POI_PLACES_CONFIG[type.toLowerCase()];
@@ -81,7 +149,6 @@ export async function fetchPOIsGooglePlaces(routeCoords, poiTypes) {
     }),
   );
 
-  // Merge + deduplicate by place id.
   const seen = new Set();
   const all = results
     .filter((r) => r.status === "fulfilled")
@@ -92,18 +159,23 @@ export async function fetchPOIsGooglePlaces(routeCoords, poiTypes) {
       return true;
     });
 
-  // Keep only places within 400 m of the actual route.
   return all
     .filter((p) => {
       if (p.location?.latitude == null || p.location?.longitude == null)
         return false;
       return (
-        minDistToRoute([p.location.longitude, p.location.latitude], routeCoords) <= 400
+        minDistToRoute(
+          [p.location.longitude, p.location.latitude],
+          routeCoords,
+        ) <= 400
       );
     })
     .map((p, i) => ({
       type: "Feature",
-      geometry: { type: "Point", coordinates: [p.location.longitude, p.location.latitude] },
+      geometry: {
+        type: "Point",
+        coordinates: [p.location.longitude, p.location.latitude],
+      },
       properties: {
         id: p.id ?? i,
         name: p.displayName?.text ?? "Unnamed",
@@ -118,9 +190,6 @@ export async function fetchPOIsGooglePlaces(routeCoords, poiTypes) {
 
 // ─── Photon geocoding ─────────────────────────────────────────────────────────
 
-// Reverse-geocode a [lng, lat] via Photon (OSM, no API key) into a short
-// human-readable place name like "Vilnius, Lithuania".
-// Returns null on any failure — caller falls back to raw coords.
 export async function reverseGeocodePlaceName([lng, lat], lang = "en") {
   try {
     const url = `https://photon.komoot.io/reverse?lat=${lat}&lon=${lng}&lang=${encodeURIComponent(lang)}`;
@@ -135,15 +204,12 @@ export async function reverseGeocodePlaceName([lng, lat], lang = "en") {
       props.state && props.state !== props.city ? props.state : null,
       props.country,
     ].filter(Boolean);
-    if (!parts.length) return null;
-    return parts.join(", ");
+    return parts.length ? parts.join(", ") : null;
   } catch {
     return null;
   }
 }
 
-// Forward-geocode a free-text place name via Photon into [lng, lat].
-// Returns null on failure.
 export async function forwardGeocode(query, lang = "en") {
   if (!query || typeof query !== "string") return null;
   try {
@@ -153,34 +219,65 @@ export async function forwardGeocode(query, lang = "en") {
     const data = await res.json();
     const coords = data?.features?.[0]?.geometry?.coordinates;
     if (!Array.isArray(coords) || coords.length !== 2) return null;
-    return [coords[0], coords[1]]; // [lng, lat]
+    return [coords[0], coords[1]];
   } catch {
     return null;
   }
 }
 
-// ─── AI intent-driven Places search ──────────────────────────────────────────
+// ─── AI mode: Places Details by place ID ─────────────────────────────────────
+// Used after Gemini Maps Grounding returns authoritative Google Place IDs.
 
-// Map our locale codes to BCP-47 language tags accepted by Google Places API.
+// Fetch a single place via the Places (New) Details API.
+// Returns a normalized POI or null on failure.
+export async function fetchPlaceById(placeId, intent = "") {
+  if (!GOOGLE_PLACES_API_KEY || !placeId) return null;
+  try {
+    const url = `${GOOGLE_PLACES_DETAILS_BASE}/${encodeURIComponent(placeId)}`;
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: {
+          "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
+          "X-Goog-FieldMask": PLACE_DETAILS_FIELD_MASK,
+        },
+      },
+      TIMEOUT_PLACES_MS,
+    );
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.warn(
+        `[places] fetchPlaceById ${placeId} → ${res.status}: ${errText.slice(0, 200)}`,
+      );
+      return null;
+    }
+    const place = await res.json();
+    return normalizePlaceDetails(place, intent);
+  } catch (err) {
+    console.warn(`[places] fetchPlaceById error (${placeId}):`, err.message);
+    return null;
+  }
+}
+
+// Batch-fetch places by ID in parallel.
+// entries: Array<{ placeId: string, title?: string }>
+// Returns only the places that resolved successfully.
+export async function fetchPlacesByIds(entries) {
+  if (!entries.length) return [];
+  const results = await Promise.allSettled(
+    entries.map(({ placeId, title = "" }) => fetchPlaceById(placeId, title)),
+  );
+  return results
+    .filter((r) => r.status === "fulfilled" && r.value !== null)
+    .map((r) => r.value);
+}
+
+// ─── AI mode: intent-driven Places text search (fallback) ────────────────────
+
 export const PLACES_LANG_MAP = { en: "en", lt: "lt" };
 
-export const PLACES_FIELD_MASK = [
-  "places.id",
-  "places.displayName",
-  "places.formattedAddress",
-  "places.location",
-  "places.rating",
-  "places.userRatingCount",
-  "places.websiteUri",
-  "places.googleMapsUri",
-  "places.types",
-  "places.primaryType",
-  "places.editorialSummary",
-  "places.photos",
-].join(",");
-
-// Run ONE Google Places Text Search for a single intent. Returns a list of
-// POIs in our normalized shape.
+// Run ONE Google Places Text Search for a single intent.
 export async function searchPlacesByIntent(
   intent,
   { start, end, hasEnd, searchCenter, searchRadiusM, lang },
@@ -198,7 +295,7 @@ export async function searchPlacesByIntent(
       textQueryExtra = ` in ${intent.specific_area}`;
     } else {
       console.warn(
-        `[aiRouting] could not geocode specific_area "${intent.specific_area}" — falling back to along_route`,
+        `[places] could not geocode "${intent.specific_area}" — falling back to along_route`,
       );
       textQueryExtra = ` ${intent.specific_area}`;
     }
@@ -213,21 +310,19 @@ export async function searchPlacesByIntent(
   }
 
   if (!rect) {
-    if (hasEnd) {
-      rect = { rectangle: bboxFromCorridor(start, end, 3_000) };
-    } else {
-      rect = {
-        rectangle: bboxFromCenter(
-          searchCenter,
-          Math.max(1000, Math.min(searchRadiusM, 50_000)),
-        ),
-      };
-    }
+    rect = hasEnd
+      ? { rectangle: bboxFromCorridor(start, end, 3_000) }
+      : {
+          rectangle: bboxFromCenter(
+            searchCenter,
+            Math.max(1_000, Math.min(searchRadiusM, 50_000)),
+          ),
+        };
   }
 
   const body = {
     textQuery: `${intent.theme}${textQueryExtra}`.trim(),
-    pageSize: Math.max(1, Math.min(intent.count, 10)),
+    pageSize: Math.max(1, Math.min(intent.count, 20)),
     languageCode,
     locationRestriction: rect,
     rankPreference: "RELEVANCE",
@@ -239,49 +334,50 @@ export async function searchPlacesByIntent(
 
   let places;
   try {
-    const res = await fetchWithTimeout(GOOGLE_PLACES_TEXT_SEARCH_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
-        "X-Goog-FieldMask": PLACES_FIELD_MASK,
-      },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const errText = await res.text();
-      console.warn(
-        `[places] search failed for intent "${body.textQuery}" (${res.status}): ${errText.slice(0, 200)}`,
-      );
-      return [];
-    }
-    const data = await res.json();
-    places = data.places ?? [];
-  } catch (err) {
-    console.warn(
-      `[places] search error for intent "${body.textQuery}":`,
-      err.message,
-    );
-    return [];
-  }
-
-  // If strict type filtering returned nothing, retry once relaxed.
-  if (!places.length && body.strictTypeFiltering) {
-    console.log(
-      `[places] strict filter returned 0 for "${body.textQuery}", retrying relaxed`,
-    );
-    const relaxedBody = { ...body };
-    delete relaxedBody.strictTypeFiltering;
-    try {
-      const res = await fetchWithTimeout(GOOGLE_PLACES_TEXT_SEARCH_URL, {
+    const res = await fetchWithTimeout(
+      GOOGLE_PLACES_TEXT_SEARCH_URL,
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
           "X-Goog-FieldMask": PLACES_FIELD_MASK,
         },
-        body: JSON.stringify(relaxedBody),
-      });
+        body: JSON.stringify(body),
+      },
+      TIMEOUT_PLACES_MS,
+    );
+    if (!res.ok) {
+      console.warn(
+        `[places] text search failed for "${body.textQuery}" (${res.status})`,
+      );
+      return [];
+    }
+    const data = await res.json();
+    places = data.places ?? [];
+  } catch (err) {
+    console.warn(`[places] text search error for "${body.textQuery}":`, err.message);
+    return [];
+  }
+
+  // Retry once without strict type filtering if it returned nothing.
+  if (!places.length && body.strictTypeFiltering) {
+    const relaxed = { ...body };
+    delete relaxed.strictTypeFiltering;
+    try {
+      const res = await fetchWithTimeout(
+        GOOGLE_PLACES_TEXT_SEARCH_URL,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
+            "X-Goog-FieldMask": PLACES_FIELD_MASK,
+          },
+          body: JSON.stringify(relaxed),
+        },
+        TIMEOUT_PLACES_MS,
+      );
       if (res.ok) {
         const data = await res.json();
         places = data.places ?? [];
@@ -292,33 +388,16 @@ export async function searchPlacesByIntent(
   }
 
   return places
-    .map((place) => {
-      if (place.location?.latitude == null || place.location?.longitude == null)
-        return null;
-      return {
-        name: place.displayName?.text ?? "Unnamed place",
-        lat: place.location.latitude,
-        lng: place.location.longitude,
-        description:
-          place.editorialSummary?.text ??
-          `${intent.theme}${textQueryExtra}`.trim(),
-        place_id: place.id ?? null,
-        formatted_address: place.formattedAddress ?? null,
-        rating: place.rating ?? null,
-        user_rating_count: place.userRatingCount ?? null,
-        website_uri: place.websiteUri ?? null,
-        google_maps_uri: place.googleMapsUri ?? null,
-        types: place.types ?? [],
-        primary_type: place.primaryType ?? null,
-        editorial_summary: place.editorialSummary?.text ?? null,
-        photo_name: place.photos?.[0]?.name ?? null,
-        _intent: intent.theme,
-      };
-    })
+    .map((place) => normalizePlaceDetails(
+      // Text search returns fields nested under `places[]`, but the shape is
+      // otherwise identical to the Details response after spreading.
+      place,
+      `${intent.theme}${textQueryExtra}`.trim(),
+    ))
     .filter(Boolean);
 }
 
-// Run every intent's Places search in parallel, merge results, dedupe by place_id.
+// Run every intent's text search in parallel, merge, and deduplicate by place_id.
 export async function searchPlacesForAllIntents(intents, ctx) {
   const lists = await Promise.all(
     intents.map((intent) => searchPlacesByIntent(intent, ctx)),
@@ -326,7 +405,8 @@ export async function searchPlacesForAllIntents(intents, ctx) {
   const byId = new Map();
   for (const list of lists) {
     for (const poi of list) {
-      const key = poi.place_id || `${poi.lat.toFixed(5)},${poi.lng.toFixed(5)}`;
+      const key =
+        poi.place_id || `${poi.lat.toFixed(5)},${poi.lng.toFixed(5)}`;
       if (!byId.has(key)) byId.set(key, poi);
     }
   }

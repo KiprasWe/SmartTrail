@@ -51,13 +51,13 @@ type TabKey = "a_to_b" | "round_trip" | "ai";
 type TransportKey =
   | "foot-walking"
   | "foot-hiking"
+  | "running"
   | "cycling-regular"
   | "cycling-mountain"
   | "cycling-electric"
-  | "cycling-road"
-  | "running";
+  | "cycling-road";
 type ElevationKey = "auto" | "flat" | "moderate" | "hilly";
-type DistanceKey = "5" | "10" | "15" | "20" | "custom";
+type DistanceKey = "5" | "10" | "20" | "30" | "custom";
 
 interface MustStop {
   id: string;
@@ -86,13 +86,41 @@ const TRANSPORT_OPTIONS: {
   tKey: string;
   icon: keyof typeof Ionicons.glyphMap;
 }[] = [
-  { key: "foot-walking", tKey: "generate.transport-walking", icon: "walk-outline" },
-  { key: "foot-hiking", tKey: "generate.transport-hiking", icon: "trail-sign-outline" },
-  { key: "running", tKey: "generate.transport-running", icon: "fitness-outline" },
-  { key: "cycling-regular", tKey: "generate.transport-cycling", icon: "bicycle-outline" },
-  { key: "cycling-road", tKey: "generate.transport-road", icon: "speedometer-outline" },
-  { key: "cycling-mountain", tKey: "generate.transport-mtb", icon: "navigate-outline" },
-  { key: "cycling-electric", tKey: "generate.transport-ebike", icon: "flash-outline" },
+  {
+    key: "foot-walking",
+    tKey: "generate.transport-walking",
+    icon: "walk-outline",
+  },
+  {
+    key: "foot-hiking",
+    tKey: "generate.transport-hiking",
+    icon: "trail-sign-outline",
+  },
+  {
+    key: "running",
+    tKey: "generate.transport-running",
+    icon: "fitness-outline",
+  },
+  {
+    key: "cycling-regular",
+    tKey: "generate.transport-cycling",
+    icon: "bicycle-outline",
+  },
+  {
+    key: "cycling-road",
+    tKey: "generate.transport-road",
+    icon: "speedometer-outline",
+  },
+  {
+    key: "cycling-mountain",
+    tKey: "generate.transport-mtb",
+    icon: "navigate-outline",
+  },
+  {
+    key: "cycling-electric",
+    tKey: "generate.transport-ebike",
+    icon: "flash-outline",
+  },
 ];
 
 const ELEVATION_OPTIONS: {
@@ -102,7 +130,11 @@ const ELEVATION_OPTIONS: {
 }[] = [
   { key: "auto", tKey: "generate.elevation-auto", icon: "options-outline" },
   { key: "flat", tKey: "generate.elevation-flat", icon: "remove-outline" },
-  { key: "moderate", tKey: "generate.elevation-moderate", icon: "pulse-outline" },
+  {
+    key: "moderate",
+    tKey: "generate.elevation-moderate",
+    icon: "pulse-outline",
+  },
   { key: "hilly", tKey: "generate.elevation-hilly", icon: "triangle-outline" },
 ];
 
@@ -115,7 +147,11 @@ const POI_OPTIONS: {
   { key: "tourism", tKey: "generate.poi-viewpoints", icon: "eye-outline" },
   { key: "historic", tKey: "generate.poi-historic", icon: "flag-outline" },
   { key: "food", tKey: "generate.poi-food", icon: "cafe-outline" },
-  { key: "arts_culture", tKey: "generate.poi-arts", icon: "color-palette-outline" },
+  {
+    key: "arts_culture",
+    tKey: "generate.poi-arts",
+    icon: "color-palette-outline",
+  },
   { key: "leisure", tKey: "generate.poi-leisure", icon: "basketball-outline" },
 ];
 
@@ -144,6 +180,7 @@ function LocationRow({
   onPress,
   onClear,
   showHandle,
+  alwaysShowClear,
   textColor,
   mutedColor,
   accent,
@@ -155,10 +192,12 @@ function LocationRow({
   onPress: () => void;
   onClear?: () => void;
   showHandle?: boolean;
+  alwaysShowClear?: boolean;
   textColor: string;
   mutedColor: string;
   accent: string;
 }) {
+  const showClear = (alwaysShowClear || isFilled) && !!onClear;
   return (
     <TouchableOpacity
       style={styles.locationRow}
@@ -191,7 +230,7 @@ function LocationRow({
       >
         {label}
       </Text>
-      {isFilled && onClear ? (
+      {showClear ? (
         <TouchableOpacity
           onPress={onClear}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -509,9 +548,11 @@ export default function GenerateScreen() {
   // AI mode
   const [aiStartLocation, setAiStartLocation] =
     useState<ResolvedLocation | null>(null);
-  const [aiEndLocation, setAiEndLocation] =
-    useState<ResolvedLocation | null>(null);
+  const [aiEndLocation, setAiEndLocation] = useState<ResolvedLocation | null>(
+    null,
+  );
   const [aiPrompt, setAiPrompt] = useState("");
+  const [aiMode, setAiMode] = useState<"a_to_b" | "round_trip">("a_to_b");
 
   // Must stops (shared)
   const [mustStops, setMustStops] = useState<MustStop[]>([]);
@@ -579,8 +620,10 @@ export default function GenerateScreen() {
   const customDistanceKm = parseFloat(customDistanceText);
   const customDistanceValid =
     distance !== "custom" ||
-    (!isNaN(customDistanceKm) && customDistanceKm >= 0.5 && customDistanceKm <= 100);
-  const aiNeedsDistance = !aiEndLocation; // loop mode when no end
+    (!isNaN(customDistanceKm) &&
+      customDistanceKm >= 0.5 &&
+      customDistanceKm <= 100);
+  const aiNeedsDistance = aiMode === "round_trip";
   const canGenerate =
     tab === "a_to_b"
       ? !!startLocation && !!endLocation
@@ -589,9 +632,9 @@ export default function GenerateScreen() {
         : /* ai */
           !!aiStartLocation &&
           aiPrompt.trim().length > 0 &&
-          (!aiNeedsDistance || customDistanceValid);
+          (aiMode === "a_to_b" ? !!aiEndLocation : customDistanceValid);
 
-  const token = useAuthStore((s) => s.token);
+  const getValidToken = useAuthStore((s) => s.getValidToken);
   const [generating, setGenerating] = useState(false);
   // Phase label shown in the Generate button during AI streaming generation.
   // null for non-AI modes (plain spinner) or before any stage event arrives.
@@ -601,7 +644,9 @@ export default function GenerateScreen() {
   // if the user navigates away before the stream completes.
   const esCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    return () => { esCleanupRef.current?.(); };
+    return () => {
+      esCleanupRef.current?.();
+    };
   }, []);
 
   const handleGenerate = useCallback(async () => {
@@ -629,16 +674,27 @@ export default function GenerateScreen() {
           aiStartLocation!.coords.lng,
           aiStartLocation!.coords.lat,
         ] as [number, number];
-        const aiEnd = aiEndLocation
-          ? ([aiEndLocation.coords.lng, aiEndLocation.coords.lat] as [
-              number,
-              number,
-            ])
-          : undefined;
+        const aiEnd =
+          aiMode === "a_to_b" && aiEndLocation
+            ? ([aiEndLocation.coords.lng, aiEndLocation.coords.lat] as [
+                number,
+                number,
+              ])
+            : undefined;
+        const aiWaypoints = mustStops
+          .filter((s) => s.location !== null)
+          .map(
+            (s) =>
+              [s.location!.coords.lng, s.location!.coords.lat] as [
+                number,
+                number,
+              ],
+          );
         genParams = {
           mode: "ai" as const,
           start: aiStart,
           ...(aiEnd ? { end: aiEnd } : { distance: pickedDistanceM }),
+          ...(aiWaypoints.length > 0 ? { waypoints: aiWaypoints } : {}),
           profile: transport,
           elevationPreference: elevMap[elevation] ?? "optimal",
           preferences: aiPrompt.trim(),
@@ -647,6 +703,7 @@ export default function GenerateScreen() {
 
         // ── AI mode streams via SSE so we can show live phase progress ──
         setProgressLabel(getAiStageLabel("ai_pois"));
+        const freshToken = await getValidToken();
         await new Promise<void>((resolve, reject) => {
           const es = new EventSource<AiStreamEvents>(
             `${process.env.EXPO_PUBLIC_API_URL}/routes/generate-ai/stream`,
@@ -654,7 +711,7 @@ export default function GenerateScreen() {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                ...(freshToken ? { Authorization: `Bearer ${freshToken}` } : {}),
               },
               body: JSON.stringify(genParams),
               // Disable auto-reconnect — Gemini calls are expensive, we don't
@@ -774,35 +831,24 @@ export default function GenerateScreen() {
               waypoints,
             };
 
-        endpoint = isLoop
-          ? `${process.env.EXPO_PUBLIC_API_URL}/routes/generate-loop`
-          : `${process.env.EXPO_PUBLIC_API_URL}/routes/generate`;
+        endpoint = isLoop ? "/routes/generate-loop" : "/routes/generate";
       }
 
-      const res = await fetch(endpoint, {
+      const { authFetch } = useAuthStore.getState();
+      const { data: routeResp } = await authFetch(endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(genParams),
+        data: genParams,
       });
-
-      const json = await res.json();
-      if (!res.ok || json.status !== "success") {
-        const msg = json.message ?? json.code ?? "Route generation failed";
-        throw new Error(msg);
-      }
 
       router.push({
         pathname: "/route-map",
         params: {
-          payload: JSON.stringify(json.data),
+          payload: JSON.stringify(routeResp.data),
           genParams: JSON.stringify(genParams),
         },
       });
     } catch (e: unknown) {
-      const msg = (e instanceof Error) ? e.message : t("generate.error");
+      const msg = e instanceof Error ? e.message : t("generate.error");
       Alert.alert(t("generate.error"), msg);
     } finally {
       setGenerating(false);
@@ -811,6 +857,7 @@ export default function GenerateScreen() {
   }, [
     canGenerate,
     tab,
+    aiMode,
     startLocation,
     endLocation,
     roundStartLocation,
@@ -823,7 +870,7 @@ export default function GenerateScreen() {
     distance,
     customDistanceText,
     selectedPoi,
-    token,
+    getValidToken,
   ]);
 
   if (isOnline === false) return <OfflineScreen />;
@@ -832,7 +879,10 @@ export default function GenerateScreen() {
   // ── Shared form sections ──
   const transportSection = (
     <View style={styles.formGroup}>
-      <SectionLabel label={t("generate.section-transport")} color={mutedColor} />
+      <SectionLabel
+        label={t("generate.section-transport")}
+        color={mutedColor}
+      />
       <TransportPicker
         value={transport}
         onChange={setTransport}
@@ -861,7 +911,10 @@ export default function GenerateScreen() {
 
   const elevationSection = (
     <View style={styles.formGroup}>
-      <SectionLabel label={t("generate.section-elevation")} color={mutedColor} />
+      <SectionLabel
+        label={t("generate.section-elevation")}
+        color={mutedColor}
+      />
       <ElevationPicker
         value={elevation}
         onChange={setElevation}
@@ -888,16 +941,23 @@ export default function GenerateScreen() {
           <LocationRow
             dotColor={accent}
             dotStyle="outlined"
-            label={stop.location?.label ?? t("generate.stop-label", { n: i + 1 })}
+            label={
+              stop.location?.label ?? t("generate.stop-label", { n: i + 1 })
+            }
             isFilled={!!stop.location}
             onPress={() => openSearch({ type: "stop", id: stop.id })}
-            onClear={() =>
-              setMustStops((prev) =>
-                prev.map((s) =>
-                  s.id === stop.id ? { ...s, location: null } : s,
-                ),
-              )
-            }
+            onClear={() => {
+              if (stop.location) {
+                setMustStops((prev) =>
+                  prev.map((s) =>
+                    s.id === stop.id ? { ...s, location: null } : s,
+                  ),
+                );
+              } else {
+                removeStop(stop.id);
+              }
+            }}
+            alwaysShowClear
             showHandle
             textColor={textColor}
             mutedColor={mutedColor}
@@ -923,7 +983,9 @@ export default function GenerateScreen() {
         >
           <Ionicons name="add" size={14} color={accent} />
         </View>
-        <Text style={[styles.addStopLabel, { color: accent }]}>{t("generate.add-stop")}</Text>
+        <Text style={[styles.addStopLabel, { color: accent }]}>
+          {t("generate.add-stop")}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -947,7 +1009,10 @@ export default function GenerateScreen() {
               return (
                 <TouchableOpacity
                   key={m.key}
-                  style={[styles.modeTab, active && { backgroundColor: accent }]}
+                  style={[
+                    styles.modeTab,
+                    active && { backgroundColor: accent },
+                  ]}
                   onPress={() => setTab(m.key)}
                   activeOpacity={0.72}
                 >
@@ -978,18 +1043,65 @@ export default function GenerateScreen() {
       >
         {tab === "ai" ? (
           <View style={styles.formSection}>
-            {/* Start + optional destination */}
+            {/* AI sub-mode: A→B or Round Trip */}
+            <View
+              style={[
+                styles.subModeBar,
+                { backgroundColor: surface, borderColor: border },
+              ]}
+            >
+              {(
+                [
+                  { key: "a_to_b", label: t("generate.mode-atob") },
+                  { key: "round_trip", label: t("generate.mode-round-trip") },
+                ] as const
+              ).map((m) => {
+                const active = aiMode === m.key;
+                return (
+                  <TouchableOpacity
+                    key={m.key}
+                    style={[
+                      styles.subModeTab,
+                      active && { backgroundColor: accent },
+                    ]}
+                    onPress={() => {
+                      setAiMode(m.key);
+                      // Clear end location when switching to round trip
+                      if (m.key === "round_trip") setAiEndLocation(null);
+                    }}
+                    activeOpacity={0.72}
+                  >
+                    <Text
+                      style={[
+                        styles.subModeTabText,
+                        { color: active ? "#fff" : mutedColor },
+                      ]}
+                    >
+                      {m.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Locations card */}
             <View style={styles.formGroup}>
-              <SectionLabel label={t("generate.section-locations")} color={mutedColor} />
+              <SectionLabel
+                label={t("generate.section-locations")}
+                color={mutedColor}
+              />
               <View
                 style={[
                   styles.card,
                   { backgroundColor: surface, borderColor: border },
                 ]}
               >
+                {/* Start */}
                 <LocationRow
                   dotColor="#1D9E75"
-                  label={aiStartLocation?.label ?? t("generate.placeholder-start")}
+                  label={
+                    aiStartLocation?.label ?? t("generate.placeholder-start")
+                  }
                   isFilled={!!aiStartLocation}
                   onPress={() => openSearch("ai_start")}
                   onClear={() => setAiStartLocation(null)}
@@ -997,26 +1109,104 @@ export default function GenerateScreen() {
                   mutedColor={mutedColor}
                   accent={accent}
                 />
+
+                {/* Must stops inline */}
+                {mustStops.map((stop, i) => (
+                  <View key={stop.id}>
+                    <View
+                      style={[
+                        styles.locationDivider,
+                        { backgroundColor: border },
+                      ]}
+                    />
+                    <LocationRow
+                      dotColor={accent}
+                      dotStyle="outlined"
+                      label={
+                        stop.location?.label ??
+                        t("generate.stop-label", { n: i + 1 })
+                      }
+                      isFilled={!!stop.location}
+                      onPress={() => openSearch({ type: "stop", id: stop.id })}
+                      onClear={() => {
+                        if (stop.location) {
+                          setMustStops((prev) =>
+                            prev.map((s) =>
+                              s.id === stop.id ? { ...s, location: null } : s,
+                            ),
+                          );
+                        } else {
+                          removeStop(stop.id);
+                        }
+                      }}
+                      alwaysShowClear
+                      showHandle
+                      textColor={textColor}
+                      mutedColor={mutedColor}
+                      accent={accent}
+                    />
+                  </View>
+                ))}
+
+                {/* Add stop */}
                 <View
                   style={[styles.locationDivider, { backgroundColor: border }]}
                 />
-                <LocationRow
-                  dotColor="#E24B4A"
-                  label={aiEndLocation?.label ?? t("generate.placeholder-destination-optional")}
-                  isFilled={!!aiEndLocation}
-                  onPress={() => openSearch("ai_end")}
-                  onClear={() => setAiEndLocation(null)}
-                  textColor={textColor}
-                  mutedColor={mutedColor}
-                  accent={accent}
-                />
+                <TouchableOpacity
+                  style={styles.addStopRow}
+                  onPress={addStop}
+                  activeOpacity={0.6}
+                >
+                  <View
+                    style={[
+                      styles.addStopIcon,
+                      {
+                        backgroundColor: accent + "18",
+                        borderColor: accent + "40",
+                      },
+                    ]}
+                  >
+                    <Ionicons name="add" size={14} color={accent} />
+                  </View>
+                  <Text style={[styles.addStopLabel, { color: accent }]}>
+                    {t("generate.add-stop")}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* End — only for A→B */}
+                {aiMode === "a_to_b" && (
+                  <>
+                    <View
+                      style={[
+                        styles.locationDivider,
+                        { backgroundColor: border },
+                      ]}
+                    />
+                    <LocationRow
+                      dotColor="#E24B4A"
+                      label={
+                        aiEndLocation?.label ??
+                        t("generate.placeholder-destination")
+                      }
+                      isFilled={!!aiEndLocation}
+                      onPress={() => openSearch("ai_end")}
+                      onClear={() => setAiEndLocation(null)}
+                      textColor={textColor}
+                      mutedColor={mutedColor}
+                      accent={accent}
+                    />
+                  </>
+                )}
               </View>
             </View>
 
-            {/* Distance — only when no end (loop mode) */}
-            {aiNeedsDistance && (
+            {/* Distance — only for round trip */}
+            {aiMode === "round_trip" && (
               <View style={styles.formGroup}>
-                <SectionLabel label={t("generate.section-distance")} color={mutedColor} />
+                <SectionLabel
+                  label={t("generate.section-distance")}
+                  color={mutedColor}
+                />
                 <DistancePicker
                   value={distance}
                   onChange={setDistance}
@@ -1033,7 +1223,10 @@ export default function GenerateScreen() {
 
             {/* AI prompt */}
             <View style={styles.formGroup}>
-              <SectionLabel label={t("generate.section-ai-prompt")} color={mutedColor} />
+              <SectionLabel
+                label={t("generate.section-ai-prompt")}
+                color={mutedColor}
+              />
               <View
                 style={[
                   styles.card,
@@ -1065,7 +1258,10 @@ export default function GenerateScreen() {
           <View style={styles.formSection}>
             {/* Locations: start → stops → end in one card */}
             <View style={styles.formGroup}>
-              <SectionLabel label={t("generate.section-locations")} color={mutedColor} />
+              <SectionLabel
+                label={t("generate.section-locations")}
+                color={mutedColor}
+              />
               <View
                 style={[
                   styles.card,
@@ -1075,7 +1271,9 @@ export default function GenerateScreen() {
                 {/* Start */}
                 <LocationRow
                   dotColor="#1D9E75"
-                  label={startLocation?.label ?? t("generate.placeholder-start")}
+                  label={
+                    startLocation?.label ?? t("generate.placeholder-start")
+                  }
                   isFilled={!!startLocation}
                   onPress={() => openSearch("start")}
                   onClear={() => setStartLocation(null)}
@@ -1115,7 +1313,8 @@ export default function GenerateScreen() {
                           ]}
                           numberOfLines={1}
                         >
-                          {stop.location?.label ?? t("generate.stop-label", { n: i + 1 })}
+                          {stop.location?.label ??
+                            t("generate.stop-label", { n: i + 1 })}
                         </Text>
                       </TouchableOpacity>
                       <TouchableOpacity
@@ -1164,7 +1363,9 @@ export default function GenerateScreen() {
                 />
                 <LocationRow
                   dotColor="#E24B4A"
-                  label={endLocation?.label ?? t("generate.placeholder-destination")}
+                  label={
+                    endLocation?.label ?? t("generate.placeholder-destination")
+                  }
                   isFilled={!!endLocation}
                   onPress={() => openSearch("end")}
                   onClear={() => setEndLocation(null)}
@@ -1183,7 +1384,10 @@ export default function GenerateScreen() {
           <View style={styles.formSection}>
             {/* Start */}
             <View style={styles.formGroup}>
-              <SectionLabel label={t("generate.section-start")} color={mutedColor} />
+              <SectionLabel
+                label={t("generate.section-start")}
+                color={mutedColor}
+              />
               <View
                 style={[
                   styles.card,
@@ -1192,7 +1396,10 @@ export default function GenerateScreen() {
               >
                 <LocationRow
                   dotColor={accent}
-                  label={roundStartLocation?.label ?? t("generate.placeholder-loop-start")}
+                  label={
+                    roundStartLocation?.label ??
+                    t("generate.placeholder-loop-start")
+                  }
                   isFilled={!!roundStartLocation}
                   onPress={() => openSearch("round_start")}
                   onClear={() => setRoundStartLocation(null)}
@@ -1205,13 +1412,19 @@ export default function GenerateScreen() {
 
             {/* Must stops */}
             <View style={styles.formGroup}>
-              <SectionLabel label={t("generate.section-stops")} color={mutedColor} />
+              <SectionLabel
+                label={t("generate.section-stops")}
+                color={mutedColor}
+              />
               {stopsCard}
             </View>
 
             {/* Distance */}
             <View style={styles.formGroup}>
-              <SectionLabel label={t("generate.section-distance")} color={mutedColor} />
+              <SectionLabel
+                label={t("generate.section-distance")}
+                color={mutedColor}
+              />
               <DistancePicker
                 value={distance}
                 onChange={setDistance}
@@ -1335,6 +1548,21 @@ const styles = StyleSheet.create({
   modeTabText: { fontSize: 14, fontWeight: "600" },
 
   scroll: { paddingHorizontal: 20, paddingTop: 4 },
+
+  subModeBar: {
+    flexDirection: "row",
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 3,
+    gap: 3,
+  },
+  subModeTab: {
+    flex: 1,
+    paddingVertical: 9,
+    alignItems: "center",
+    borderRadius: 9,
+  },
+  subModeTabText: { fontSize: 13, fontWeight: "600" },
 
   formSection: { gap: 20 },
   formGroup: { gap: 8 },

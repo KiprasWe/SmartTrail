@@ -1,6 +1,6 @@
 // utils/http.js — low-level fetch helpers used across lib modules
 
-const TIMEOUT_ROUTING_MS = 30_000; // ORS / Valhalla routing
+const TIMEOUT_ROUTING_MS = 30_000; // ORS routing
 export const TIMEOUT_PLACES_MS = 15_000; // Google Places text search / photo
 
 export async function fetchWithTimeout(

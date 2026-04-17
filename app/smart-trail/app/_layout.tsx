@@ -59,15 +59,8 @@ function RootLayoutNav() {
         <Stack.Protected guard={!!user && hasOnboarded}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="route-map" options={{ headerShown: false }} />
-          <Stack.Screen name="search-users" options={{ headerShown: false }} />
           <Stack.Screen name="settings" options={{ headerShown: false }} />
           <Stack.Screen name="edit-profile" options={{ headerShown: false }} />
-          <Stack.Screen name="user-profile" options={{ headerShown: false }} />
-          <Stack.Screen name="follow-list" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="follow-requests"
-            options={{ headerShown: false }}
-          />
           <Stack.Screen
             name="change-password"
             options={{ headerShown: false }}

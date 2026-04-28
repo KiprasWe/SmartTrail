@@ -2,8 +2,13 @@ import express from "express";
 import {
   directRouting,
   loopRouting,
+  addPoiToRoute,
+  loopPoiSuggestions,
 } from "../controllers/routeGenerationController.js";
-import { aiRouting, aiRoutingStream } from "../controllers/aiRoutingController.js";
+import {
+  aiRouting,
+  aiRoutingStream,
+} from "../controllers/aiRoutingController.js";
 import {
   saveRoute,
   listSavedRoutes,
@@ -19,32 +24,66 @@ import {
   aiRouteSchema,
   saveRouteSchema,
   updateRouteSchema,
+  loopPoiSuggestSchema,
+  addPoiSchema,
 } from "../validators/routeValidators.js";
 
-const router = express.Router();
+export default function buildRoutesRouter(generateLimiter) {
+  const router = express.Router();
 
-// Route generation — all require authentication so the per-user rate limiter
-// in server.js can key on req.user.id instead of falling back to IP.
-router.post("/generate", authMiddleware, validate(atoBSchema), directRouting);
-router.post("/generate-loop", authMiddleware, validate(loopSchema), loopRouting);
-router.post("/generate-ai", authMiddleware, validate(aiRouteSchema), aiRouting);
-router.post(
-  "/generate-ai/stream",
-  authMiddleware,
-  validate(aiRouteSchema),
-  aiRoutingStream,
-);
+  router.post(
+    "/generate",
+    authMiddleware,
+    generateLimiter,
+    validate(atoBSchema),
+    directRouting,
+  );
+  router.post(
+    "/generate-loop",
+    authMiddleware,
+    generateLimiter,
+    validate(loopSchema),
+    loopRouting,
+  );
+  router.post(
+    "/generate-ai",
+    authMiddleware,
+    generateLimiter,
+    validate(aiRouteSchema),
+    aiRouting,
+  );
+  router.post(
+    "/generate-ai/stream",
+    authMiddleware,
+    generateLimiter,
+    validate(aiRouteSchema),
+    aiRoutingStream,
+  );
+  router.post(
+    "/add-poi",
+    authMiddleware,
+    generateLimiter,
+    validate(addPoiSchema),
+    addPoiToRoute,
+  );
+  router.post(
+    "/loop-pois",
+    authMiddleware,
+    generateLimiter,
+    validate(loopPoiSuggestSchema),
+    loopPoiSuggestions,
+  );
 
-// Saved routes CRUD — all require auth
-router.post("/saved", authMiddleware, validate(saveRouteSchema), saveRoute);
-router.get("/saved", authMiddleware, listSavedRoutes);
-router.get("/saved/:id", authMiddleware, getSavedRoute);
-router.patch(
-  "/saved/:id",
-  authMiddleware,
-  validate(updateRouteSchema),
-  updateSavedRoute,
-);
-router.delete("/saved/:id", authMiddleware, deleteSavedRoute);
+  router.post("/saved", authMiddleware, validate(saveRouteSchema), saveRoute);
+  router.get("/saved", authMiddleware, listSavedRoutes);
+  router.get("/saved/:id", authMiddleware, getSavedRoute);
+  router.patch(
+    "/saved/:id",
+    authMiddleware,
+    validate(updateRouteSchema),
+    updateSavedRoute,
+  );
+  router.delete("/saved/:id", authMiddleware, deleteSavedRoute);
 
-export default router;
+  return router;
+}

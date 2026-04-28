@@ -1,33 +1,21 @@
-// types/route.ts — saved-route types shared between store and screens
-
 export type Coords = [number, number]; // [lng, lat]
 
 export type RouteMode = "A_TO_B" | "LOOP" | "AI";
 
-// ── Route sub-types ──────────────────────────────────────────────────────────
-
-/** One turn-by-turn step returned by ORS. */
 export interface RouteInstruction {
-  /** Human-readable instruction string, e.g. "Turn left onto Main St". */
   instruction: string;
-  /** Maneuver type code (Valhalla / ORS numeric code). */
   type: number;
   distance_km: number;
   duration_s: number;
 }
 
-/** Elevation samples in metres ASL, one per ~30 m of route. */
 export type ElevationProfile = number[];
 
-/** Properties shared by both ORS and AI-enriched POI features. */
 export interface PoiProperties {
   id: number | string;
   name: string | null;
-  /** ORS category name or Google Places primary type. */
   category: string | null;
-  /** Metres from the route line (0 for AI/Gemini POIs). */
   distance_from_route: number;
-  // AI-enriched extras (null/undefined for ORS POIs)
   ai_description?: string | null;
   rating?: number | null;
   user_rating_count?: number | null;
@@ -37,16 +25,15 @@ export interface PoiProperties {
   editorial_summary?: string | null;
   photo_name?: string | null;
   place_id?: string | null;
+  essential?: boolean | null;
 }
 
-/** GeoJSON Point feature for a single POI. */
 export interface PoiFeature {
   type: "Feature";
-  geometry: { type: "Point"; coordinates: [number, number] }; // [lng, lat]
+  geometry: { type: "Point"; coordinates: [number, number] };
   properties: PoiProperties;
 }
 
-/** AI planning metadata stored alongside a route. */
 export interface AiPlan {
   pois: PoiFeature[];
 }
@@ -72,7 +59,6 @@ export interface SavedRouteListItem {
   isFavorite: boolean;
   createdAt: string;
   updatedAt: string;
-  // Simplified polyline for list thumbnails (~64 points, same bbox as the full route)
   thumbnail: Coords[] | null;
 }
 
@@ -85,8 +71,6 @@ export interface SavedRoute extends SavedRouteListItem {
   generationId: string | null;
 }
 
-// Payload sent to POST /routes/saved — maps the generator's snake_case response
-// into the backend's camelCase schema.
 export interface SaveRouteInput {
   title: string;
   description?: string;
@@ -111,4 +95,50 @@ export interface SaveRouteInput {
   variantLabel?: string;
   generationId?: string;
   isFavorite?: boolean;
+}
+
+export interface GenParams {
+  mode: "a_to_b" | "loop" | "ai";
+  start: Coords;
+  end?: Coords;
+  distance?: number;
+  profile: string;
+  elevationPreference: string;
+  poiTypes?: string[];
+  waypoints?: Coords[];
+  preferences?: string;
+  lang?: "en" | "lt";
+}
+
+export interface RouteVariant {
+  label: string;
+  description: string;
+  profile: string;
+  distance_km: number;
+  duration_s: number;
+  ascent_m: number;
+  descent_m: number;
+  geometry: { type: "LineString"; coordinates: Coords[] };
+  bbox: [number, number, number, number];
+  pois: PoiFeature[];
+  overlap_ratio?: number;
+  elevation_profile?: ElevationProfile;
+  maneuvers?: RouteInstruction[];
+}
+
+export interface LoopMeta {
+  requested_km: number;
+  actual_km: number;
+  min_distance_km: number | null;
+  snapped_to_min: boolean;
+  auto_extended: boolean;
+  overlap_ratio: number | null;
+}
+
+export interface RoutePayload {
+  profile: string;
+  elevation_preference: string;
+  routes: RouteVariant[];
+  controlPoints?: Coords[];
+  loop_meta?: LoopMeta;
 }

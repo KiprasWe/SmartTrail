@@ -6,7 +6,7 @@ import {
   useColorScheme,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { IconSymbol } from "@/components/ui/icon-symbol";
+import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
 import type { ReactNode } from "react";
 
@@ -49,7 +49,7 @@ export function ScreenHeader({
         ]}
         hitSlop={8}
       >
-        <IconSymbol name="chevron.left" size={16} color={ts.text} />
+        <Ionicons name="chevron-back" size={16} color={ts.text} />
       </TouchableOpacity>
 
       <View style={styles.center}>

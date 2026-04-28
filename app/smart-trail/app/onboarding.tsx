@@ -40,16 +40,10 @@ const SLIDES: Slide[] = [
     bodyKey: "onboarding.slide2-body",
   },
   {
-    key: "social",
-    icon: "people-outline",
-    titleKey: "onboarding.slide3-title",
-    bodyKey: "onboarding.slide3-body",
-  },
-  {
     key: "location",
     icon: "location-outline",
-    titleKey: "onboarding.slide4-title",
-    bodyKey: "onboarding.slide4-body",
+    titleKey: "onboarding.slide3-title",
+    bodyKey: "onboarding.slide3-body",
     isPermission: true,
   },
 ];

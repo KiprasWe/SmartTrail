@@ -35,6 +35,7 @@ export default function AuthScreen() {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [googleLoad, setGoogleLoad] = useState(false);
 
@@ -44,14 +45,15 @@ export default function AuthScreen() {
     setUsername("");
     setEmail("");
     setPassword("");
+    setConfirmPassword("");
   };
 
   const handleSubmit = async () => {
     if (isSignUp) {
-      if (!username || !email || !password) return;
+      if (!username || !email || !password || !confirmPassword) return;
       setSubmitting(true);
       try {
-        await signup(username, email, password);
+        await signup(username, email, password, confirmPassword);
       } catch (err: any) {
         Alert.alert("Error", resolve(err));
       } finally {
@@ -213,6 +215,23 @@ export default function AuthScreen() {
               },
             ]}
           />
+          {isSignUp && (
+            <TextInput
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder={t("auth.fields.confirmPassword")}
+              placeholderTextColor={tc.muted}
+              secureTextEntry
+              style={[
+                styles.input,
+                {
+                  borderColor: tc.border,
+                  color: tc.text,
+                  backgroundColor: tc.surface,
+                },
+              ]}
+            />
+          )}
         </View>
       </KeyboardAwareScrollView>
 

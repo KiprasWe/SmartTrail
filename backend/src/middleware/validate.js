@@ -1,8 +1,5 @@
 import { sendError, Errors } from "../utils/responses.js";
 
-// `source` picks which part of the request to validate: "body" (default) or
-// "query". Query params arrive as strings so the corresponding schemas are
-// expected to use z.coerce.* where needed.
 export const validate =
   (schema, source = "body") =>
   (req, res, next) => {
@@ -21,9 +18,6 @@ export const validate =
       });
     }
 
-    // Express 5 exposes req.query as a getter-only property, so we can't
-    // reassign it. Mutate in place instead — safe because safeParse returned
-    // a fresh object.
     if (source === "query") {
       for (const k of Object.keys(req.query)) delete req.query[k];
       Object.assign(req.query, result.data);

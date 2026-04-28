@@ -1,9 +1,4 @@
-// lib/geo.js — pure geographic math utilities (no network I/O)
-
-// Metres per degree of latitude (equatorial approximation).
 export const METRES_PER_DEG_LAT = 111_320;
-
-// ─── Basic math ───────────────────────────────────────────────────────────────
 
 export function computeAscentDescent(elevArr) {
   let ascent = 0,
@@ -16,7 +11,6 @@ export function computeAscentDescent(elevArr) {
   return { ascent_m: Math.round(ascent), descent_m: Math.round(descent) };
 }
 
-// [minLng, minLat, maxLng, maxLat]
 export function routeBbox(coords) {
   const lngs = coords.map((c) => c[0]);
   const lats = coords.map((c) => c[1]);
@@ -54,7 +48,6 @@ export function minDistToRoute(point, routeCoords, stride = 5) {
   return min;
 }
 
-// Haversine destination — returns [lng, lat] given origin, bearing (°N CW), distance (m)
 export function computeDestination([lng, lat], bearing_deg, distance_m) {
   const R = 6_371_000;
   const φ1 = (lat * Math.PI) / 180;
@@ -73,22 +66,16 @@ export function computeDestination([lng, lat], bearing_deg, distance_m) {
   return [(λ2 * 180) / Math.PI, (φ2 * 180) / Math.PI];
 }
 
-// ─── Bounding box helpers ─────────────────────────────────────────────────────
-
-// Build a lat/lng rectangle (SW/NE corners) around [lng, lat] with a half-side
-// length in metres. Used as a hard bounding box for Google Places
-// `locationRestriction.rectangle`.
 export function bboxFromCenter([lng, lat], radiusM) {
   const latDelta = radiusM / METRES_PER_DEG_LAT;
-  const lngDelta = radiusM / (METRES_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180) || 1);
+  const lngDelta =
+    radiusM / (METRES_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180) || 1);
   return {
     low: { latitude: lat - latDelta, longitude: lng - lngDelta },
     high: { latitude: lat + latDelta, longitude: lng + lngDelta },
   };
 }
 
-// Build a lat/lng bounding box that tightly encloses the start→end line with
-// a lateral buffer in metres.
 export function bboxFromCorridor(start, end, bufferM) {
   const minLat = Math.min(start[1], end[1]);
   const maxLat = Math.max(start[1], end[1]);
@@ -104,8 +91,6 @@ export function bboxFromCorridor(start, end, bufferM) {
   };
 }
 
-// Lat/lng bounding box centred at lat/lng with radius in km. Returns
-// { minLat, maxLat, minLng, maxLng }
 export function boundingBox(lat, lng, radiusKm) {
   const latDelta = radiusKm / 111;
   const lngDelta =
@@ -118,10 +103,6 @@ export function boundingBox(lat, lng, radiusKm) {
   };
 }
 
-// ─── Corridor filter ──────────────────────────────────────────────────────────
-
-// Equirectangular projection around `origin` — converts a [lng, lat] point to
-// local XY metres. Good enough for corridor geometry on trip-scale distances.
 export function toLocalXY([lng, lat], [originLng, originLat]) {
   const R = 6_371_000;
   const dLat = ((lat - originLat) * Math.PI) / 180;
@@ -129,12 +110,10 @@ export function toLocalXY([lng, lat], [originLng, originLat]) {
   return [dLng * R * Math.cos((originLat * Math.PI) / 180), dLat * R];
 }
 
-// For A→B trips, drop POIs that would require backtracking from the start or
-// detouring past the destination.
 export function corridorFilter(pois, start, end, corridorHalfWidthM = 3_000) {
   const e = toLocalXY(end, start);
   const lenSq = e[0] * e[0] + e[1] * e[1];
-  if (lenSq < 1) return pois; // degenerate start == end, skip
+  if (lenSq < 1) return pois;
   const kept = [];
   const dropped = [];
   for (const poi of pois) {
@@ -168,9 +147,6 @@ export function corridorFilter(pois, start, end, corridorHalfWidthM = 3_000) {
   return kept;
 }
 
-// Point-to-segment distance in metres using local XY around the segment's first
-// vertex. Returns perpendicular distance if the foot falls within [A,B],
-// otherwise distance to the nearer endpoint.
 function pointToSegmentM(point, segA, segB) {
   const p = toLocalXY(point, segA);
   const e = toLocalXY(segB, segA);
@@ -180,11 +156,7 @@ function pointToSegmentM(point, segA, segB) {
   return Math.hypot(p[0] - t * e[0], p[1] - t * e[1]);
 }
 
-// Like corridorFilter but measures distance to the actual route polyline instead
-// of the straight start→end line. More accurate for winding roads.
-// routeCoords: [[lng, lat], ...] from ORS geometry.
 export function polylineCorridorFilter(pois, routeCoords, halfWidthM = 3_000) {
-  // Thin to ~150 segments — fast enough for a single filter pass.
   const thinned = thinCoords(routeCoords, 150);
   const kept = [];
   const dropped = [];
@@ -211,11 +183,6 @@ export function polylineCorridorFilter(pois, routeCoords, halfWidthM = 3_000) {
   return kept;
 }
 
-// ─── Polyline simplification ──────────────────────────────────────────────────
-
-// Iterative Douglas-Peucker simplification. Preserves shape-critical corners
-// (tight turns, prominent peaks) far better than stride sampling.
-// Uses an explicit stack to avoid recursion-depth issues on long routes.
 export function douglasPeucker(coords, epsilon) {
   if (coords.length <= 2) return coords;
   const keep = new Uint8Array(coords.length);
@@ -250,10 +217,6 @@ export function douglasPeucker(coords, epsilon) {
   return coords.filter((_, i) => keep[i]);
 }
 
-// Simplify a LineString geometry down to ~maxPoints for list thumbnails.
-// Uses Douglas-Peucker with a fixed epsilon (≈ 11 m in lat/lng degrees) that
-// preserves corners and peaks. Falls back to stride sampling if DP still leaves
-// too many points (very dense short routes).
 export function simplifyForThumbnail(geometry, maxPoints = 64) {
   const coords = geometry?.coordinates;
   if (!Array.isArray(coords) || coords.length === 0) return null;
@@ -268,4 +231,55 @@ export function simplifyForThumbnail(geometry, maxPoints = 64) {
   const last = simplified[simplified.length - 1];
   if (out[out.length - 1] !== last) out.push(last);
   return out;
+}
+
+export function generateLoopControlPoints(
+  start,
+  targetDistanceM,
+  N,
+  rotationOffsetDeg = 0,
+) {
+  const ROAD_FACTOR = 0.65;
+  const R = (targetDistanceM * ROAD_FACTOR) / (2 * N * Math.sin(Math.PI / N));
+
+  const centre = computeDestination(start, rotationOffsetDeg, R);
+
+  const baseBearing = (rotationOffsetDeg + 180) % 360;
+  const cps = [];
+  for (let i = 1; i < N; i++) {
+    const bearing = (baseBearing + i * (360 / N)) % 360;
+    cps.push(computeDestination(centre, bearing, R));
+  }
+  return cps;
+}
+
+export function sortByBearingFromOrigin(points, [originLng, originLat]) {
+  function bearingTo([lng, lat]) {
+    const dLng = ((lng - originLng) * Math.PI) / 180;
+    const lat1 = (originLat * Math.PI) / 180;
+    const lat2 = (lat * Math.PI) / 180;
+    const y = Math.sin(dLng) * Math.cos(lat2);
+    const x =
+      Math.cos(lat1) * Math.sin(lat2) -
+      Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+    return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+  }
+  return [...points].sort((a, b) => bearingTo(a) - bearingTo(b));
+}
+
+export function sortWaypointsByRouteOrder(waypoints, routeCoords) {
+  const indexed = waypoints.map((wp) => {
+    let minDist = Infinity;
+    let closestIdx = 0;
+    for (let i = 0; i < routeCoords.length; i++) {
+      const d = haversineM(wp, routeCoords[i]);
+      if (d < minDist) {
+        minDist = d;
+        closestIdx = i;
+      }
+    }
+    return { wp, closestIdx, minDist };
+  });
+  indexed.sort((a, b) => a.closestIdx - b.closestIdx);
+  return indexed.map((x) => x.wp);
 }

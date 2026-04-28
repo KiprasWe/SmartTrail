@@ -8,8 +8,7 @@ import { connectDB, disconnectDB } from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
-import routesRoutes from "./routes/routesRoutes.js";
-import { placePhoto } from "./controllers/savedRoutesController.js";
+import buildRoutesRouter from "./routes/routesRoutes.js";
 
 import { errorHandler } from "./middleware/errorHandler.js";
 import { startCleanupJob } from "./jobs/cleanupRefreshTokens.js";
@@ -20,12 +19,8 @@ startCleanupJob();
 
 const app = express();
 
-// Railway (and most PaaS) terminate TLS at the edge and forward plain HTTP
-// internally. Without trust proxy, req.protocol is always "http" even for
-// HTTPS requests, which causes the redirect below to loop infinitely.
 app.set("trust proxy", 1);
 
-// HTTPS redirect + HSTS in production
 if (process.env.NODE_ENV === "production") {
   app.use((req, res, next) => {
     if (req.protocol !== "https") {
@@ -45,7 +40,12 @@ app.use(cors({ origin: corsOrigin ?? "*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const globalLimiter = rateLimit({ windowMs: 60_000, max: 100 });
+const globalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 100,
+  skip: (req) => !!req.user?.id,
+  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
+});
 const authLimiter = rateLimit({ windowMs: 60_000, max: 10 });
 const generateLimiter = rateLimit({
   windowMs: 60_000,
@@ -62,17 +62,13 @@ const sensitiveOpsLimiter = rateLimit({
 
 app.use(globalLimiter);
 
-// Health check — unauthenticated, no rate limit, used by LB probes.
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 app.use("/auth", authLimiter, authRoutes);
 app.use("/user", userRoutes(sensitiveOpsLimiter));
-// Photo proxy is mounted outside the generateLimiter — fetching POI thumbnails
-// must not eat into the 10/min route generation budget.
-app.get("/places/photo", placePhoto);
-app.use("/routes", generateLimiter, routesRoutes);
+app.use("/routes", buildRoutesRouter(generateLimiter));
 
 app.use(errorHandler);
 

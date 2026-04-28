@@ -21,7 +21,6 @@ export default function SettingsScreen() {
   const { signout } = useAuthStore();
   const { profile } = useProfileStore();
   const scheme = useColorScheme() ?? "light";
-  const isDark = scheme === "dark";
   const ts = Colors[scheme];
   const { t } = useTranslation();
 
@@ -34,15 +33,13 @@ export default function SettingsScreen() {
 
   return (
     <View style={[styles.root, { backgroundColor: ts.bg }]}>
-      <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
-
       <ScreenHeader title={t("settings.title")} onBack={() => router.back()} />
 
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
       >
-        {/* Security */}
+        {/* ── Security ── */}
         <Text style={[styles.sectionLabel, { color: ts.muted }]}>
           {t("settings.security").toUpperCase()}
         </Text>
@@ -52,60 +49,45 @@ export default function SettingsScreen() {
             { backgroundColor: ts.surface, borderColor: ts.border },
           ]}
         >
-          {profile && !profile.hasPassword ? (
-            <TouchableOpacity
-              style={styles.row}
-              onPress={() => router.push("/set-password")}
-              activeOpacity={0.7}
-            >
-              <View
-                style={[styles.rowIcon, { backgroundColor: ts.tint + "20" }]}
+          {(() => {
+            const needsPassword = profile && !profile.hasPassword;
+            const route = needsPassword ? "/set-password" : "/change-password";
+            const titleKey = needsPassword
+              ? "settings.set-password"
+              : "settings.change-password";
+            const subtitleKey = needsPassword
+              ? "settings.set-password-subtitle"
+              : "settings.change-password-subtitle";
+            return (
+              <TouchableOpacity
+                style={styles.row}
+                onPress={() => router.push(route)}
+                activeOpacity={0.7}
               >
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={16}
-                  color={ts.tint}
-                />
-              </View>
-              <View style={styles.rowContent}>
-                <Text style={[styles.rowTitle, { color: ts.text }]}>
-                  {t("settings.set-password")}
-                </Text>
-                <Text style={[styles.rowSubtitle, { color: ts.muted }]}>
-                  {t("settings.set-password-subtitle")}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={14} color={ts.muted} />
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={styles.row}
-              onPress={() => router.push("/change-password")}
-              activeOpacity={0.7}
-            >
-              <View
-                style={[styles.rowIcon, { backgroundColor: ts.tint + "20" }]}
-              >
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={16}
-                  color={ts.tint}
-                />
-              </View>
-              <View style={styles.rowContent}>
-                <Text style={[styles.rowTitle, { color: ts.text }]}>
-                  {t("settings.change-password")}
-                </Text>
-                <Text style={[styles.rowSubtitle, { color: ts.muted }]}>
-                  {t("settings.change-password-subtitle")}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={14} color={ts.muted} />
-            </TouchableOpacity>
-          )}
+                <View
+                  style={[styles.rowIcon, { backgroundColor: ts.tint + "20" }]}
+                >
+                  <Ionicons
+                    name="lock-closed-outline"
+                    size={16}
+                    color={ts.tint}
+                  />
+                </View>
+                <View style={styles.rowContent}>
+                  <Text style={[styles.rowTitle, { color: ts.text }]}>
+                    {t(titleKey)}
+                  </Text>
+                  <Text style={[styles.rowSubtitle, { color: ts.muted }]}>
+                    {t(subtitleKey)}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={14} color={ts.muted} />
+              </TouchableOpacity>
+            );
+          })()}
         </View>
 
-        {/* Account */}
+        {/* ── Account ── */}
         <Text style={[styles.sectionLabel, { color: ts.muted }]}>
           {t("settings.account").toUpperCase()}
         </Text>
@@ -173,4 +155,22 @@ const styles = StyleSheet.create({
   rowContent: { flex: 1 },
   rowTitle: { fontSize: 15, fontWeight: "600" },
   rowSubtitle: { fontSize: 12, marginTop: 1 },
+
+  segmentWrap: {
+    flexDirection: "row",
+    marginHorizontal: 16,
+    marginBottom: 14,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  segment: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 9,
+  },
+  segmentLabel: { fontSize: 13, fontWeight: "600" },
 });

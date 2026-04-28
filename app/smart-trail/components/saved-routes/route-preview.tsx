@@ -1,5 +1,3 @@
-// components/saved-routes/route-preview.tsx
-//
 // Tiny SVG silhouette of a route — used for saved-route list thumbnails
 // (Strava/Komoot style). Takes [lng, lat] coordinates + a bbox and projects
 // them into the given pixel box, preserving aspect ratio at the route's

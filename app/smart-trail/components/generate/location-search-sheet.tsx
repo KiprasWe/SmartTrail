@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -62,12 +62,13 @@ export function LocationSearchSheet({
   const [locating, setLocating] = useState(false);
   const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
 
-  const inputRef = useRef<TextInput>(null);
   const slideAnim = useRef(new Animated.Value(300)).current;
+  const activeRef = useRef(false);
 
   // ── Animate in/out ──
   useEffect(() => {
     if (visible) {
+      activeRef.current = true;
       setQuery("");
       clearResults();
       Animated.spring(slideAnim, {
@@ -79,11 +80,12 @@ export function LocationSearchSheet({
 
       // Silently grab last-known GPS for search bias (no permission prompt)
       Location.getLastKnownPositionAsync({}).then((pos) => {
-        if (pos) {
+        if (pos && activeRef.current) {
           setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         }
-      }).catch(() => { });
+      }).catch(() => {});
     } else {
+      activeRef.current = false;
       Keyboard.dismiss();
       Animated.timing(slideAnim, {
         toValue: 400,
@@ -225,7 +227,6 @@ export function LocationSearchSheet({
           >
             <Ionicons name="search-outline" size={18} color={ts.muted} />
             <TextInput
-              ref={inputRef}
               style={[styles.searchInput, { color: ts.text }]}
               placeholder={placeholder}
               placeholderTextColor={ts.muted}

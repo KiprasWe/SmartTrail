@@ -37,7 +37,6 @@ export const Success = {
   PASSWORD_SET: { code: "PASSWORD_SET", status: 200 },
   PASSWORD_CHANGED: { code: "PASSWORD_CHANGED", status: 200 },
 
-  // Routes
   ROUTE_GENERATED: { code: "ROUTE_GENERATED", status: 200 },
   ROUTE_SAVED: { code: "ROUTE_SAVED", status: 201 },
   ROUTE_DELETED: { code: "ROUTE_DELETED", status: 200 },
@@ -52,7 +51,6 @@ export const sendError = (res, error, details = {}) => {
     code: error.code,
     ...details,
   };
-  // Include message if present in either the error object or details
   if (error.message) body.message = error.message;
   return res.status(error.status).json(body);
 };
@@ -65,12 +63,6 @@ export const sendSuccess = (res, success, data = {}) => {
   });
 };
 
-// ─── Server-Sent Events helper ───────────────────────────────────────────────
-//
-// Opens an SSE response and returns an `emit(event, data)` function that
-// writes a named event with a JSON payload. The X-Accel-Buffering header
-// disables proxy buffering so events are flushed immediately instead of
-// arriving in one blob at the end.
 export const setupSSE = (res) => {
   res.status(200).set({
     "Content-Type": "text/event-stream",
@@ -87,8 +79,6 @@ export const setupSSE = (res) => {
   };
 };
 
-// Typed error for pipeline functions that want to surface a specific
-// Errors.* definition + message without owning the response object.
 export class PipelineError extends Error {
   constructor(errorDef, message) {
     super(message ?? errorDef.code);

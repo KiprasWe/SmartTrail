@@ -64,7 +64,11 @@
       "Bash(node:*)",
       "Bash(npm list:*)",
       "Bash(grep -n \"\\\\.findMany\\\\|\\\\.find\\\\|\\\\.query\" /c/Users/kipra/Desktop/SmartTrail/backend/src/controllers/*.js)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(find \"/c/Users/kipra/Desktop/New folder/SmartTrail/app/smart-trail\" -type f \\\\\\( -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.js\" -o -name \"*.jsx\" \\\\\\) ! -path \"*/node_modules/*\" ! -path \"*/.cxx/*\" ! -path \"*/.expo/*\" ! -path \"*/android/*\" ! -path \"*/ios/*\" ! -path \"*/build/*\" ! -path \"*/dist/*\" -exec wc -l {} +)",
+      "Bash(sort -k2)",
+      "Bash(find . -type f \\\\\\( -name \"*.tsx\" -o -name \"*.ts\" \\\\\\) ! -path \"*/node_modules/*\" ! -path \"*/.cxx/*\" ! -path \"*/.expo/*\" ! -path \"*/android/*\" ! -path \"*/ios/*\" ! -path \"*/build/*\" ! -path \"*/dist/*\" -exec grep -l \"TODO\\\\|FIXME\\\\|console\\\\.\" {} \\\\;)",
+      "mcp__ide__getDiagnostics"
     ]
   },
   "enabledPlugins": {

@@ -6,7 +6,9 @@
     "retry": "Bandyti dar kartą",
     "error": "Klaida",
     "required": "Privaloma",
-    "try-again": "Bandyti dar kartą"
+    "try-again": "Bandyti dar kartą",
+    "something-went-wrong": "Įvyko klaida",
+    "unexpected-error": "Įvyko netikėta klaida."
   },
   "auth": {
     "signIn": "Prisijungti",
@@ -25,7 +27,8 @@
     "fields": {
       "username": "Vartotojo vardas",
       "email": "El. paštas",
-      "password": "Slaptažodis"
+      "password": "Slaptažodis",
+      "confirmPassword": "Pakartokite slaptažodį"
     },
     "errors": {
       "generic": "Įvyko klaida"
@@ -40,7 +43,6 @@
     "your-routes": "Jūsų maršrutai",
     "sign-out": "Atsijungti",
     "edit-profile": "Redaguoti paskyrą",
-    "change-photo": "Keisti nuotrauką",
     "username": "Vartotojo vardas",
     "username-placeholder": "Įveskite vartotojo vardą",
     "bio": "Aprašymas",
@@ -72,7 +74,10 @@
     "sign-out": "Atsijungti",
     "sign-out-confirm": "Ar tikrai norite atsijungti?",
     "set-password-subtitle": "Pridėkite slaptažodį prie savo paskyros",
-    "change-password-subtitle": "Atnaujinkite dabartinį slaptažodį"
+    "change-password-subtitle": "Atnaujinkite dabartinį slaptažodį",
+    "appearance": "Išvaizda",
+    "language-en": "Anglų",
+    "language-lt": "Lietuvių"
   },
   "edit-profile": {
     "title": "Redaguoti profilį",
@@ -114,10 +119,8 @@
     "slide1-body": "Apibūdinkite, ko norite — 5 km ratas parke ar bėgimas prie upės — ir SmartTrail sukurs maršrutą jums.",
     "slide2-title": "Tyrinėkite ir išsisaugokite",
     "slide2-body": "Išsisaugokite mėgstamiausius maršrutus ir atsisiųskite juos naudojimui be interneto.",
-    "slide3-title": "Maršrutų charakteristikos",
-    "slide3-body": "Peržiūrėkite aukštį ir atstumą ir kitą informaciją.",
-    "slide4-title": "Įjungti buvimo vietą",
-    "slide4-body": "SmartTrail naudoja jūsų buvimo vietą, kad parodytų žemėlapį ir sugeneruotų maršrutus netoliese. Ji niekada nebus bendrinama be jūsų sutikimo.",
+    "slide3-title": "Įjungti buvimo vietą",
+    "slide3-body": "SmartTrail naudoja jūsų buvimo vietą, kad parodytų žemėlapį ir sugeneruotų maršrutus netoliese. Ji niekada nebus bendrinama be jūsų sutikimo.",
     "allow-location": "Leisti naudoti jūsų buvimo vietą",
     "next": "Toliau",
     "get-started": "Pradėti",
@@ -175,6 +178,7 @@
     "section-transport": "Transportas",
     "section-elevation": "Reljefas",
     "section-pois": "Lankytinos vietos",
+    "poi-count-label": "Aplankyti iki",
     "section-ai-prompt": "Aprašykite maršrutą",
     "section-start": "Pradžios taškas",
     "section-stops": "Privalomi sustojimai",
@@ -234,7 +238,9 @@
     "export-gpx": "Eksportuoti GPX",
     "export-gpx-error": "Nepavyko eksportuoti maršruto.",
     "navigate-to-start": "Rodyti kelią iki pradžios",
-    "navigate-to-start-error": "Nepavyko atidaryti žemėlapio."
+    "navigate-to-start-error": "Nepavyko atidaryti žemėlapio.",
+    "loop-snapped-to-min": "Atstumas nustatytas į %{km} km — tai trumpiausia kilpa per jūsų stoteles.",
+    "loop-auto-extended": "Kilpa pailginta iki %{km} km, kad pasiektų jūsų stotelę."
   },
   "weather": {
     "today": "Šiandien",

@@ -29,11 +29,9 @@ function RootLayoutNav() {
 
   useEffect(() => {
     bootstrapAuth().then(() => {
-      // only fetch profile once we know we're logged in
       const { user } = useAuthStore.getState();
       if (user) {
         bootstrapProfile();
-        // Hydrate saved-route list from disk before Profile is opened (same pattern as profile cache).
         useSavedRoutesStore.getState().bootstrap();
       }
     });

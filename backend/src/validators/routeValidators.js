@@ -24,8 +24,8 @@ export const atoBSchema = z.object({
   profile: profile.default("foot-walking"),
   elevationPreference,
   poiTypes: z.array(z.string()).optional().default([]),
+  poiCount: z.number().int().min(0).max(20).optional().default(0),
   waypoints: z.array(lngLat).optional().default([]),
-  variantLabel: z.string().optional(),
 });
 
 export const loopSchema = z.object({
@@ -34,14 +34,35 @@ export const loopSchema = z.object({
   profile: profile.default("foot-walking"),
   elevationPreference,
   poiTypes: z.array(z.string()).optional().default([]),
+  poiCount: z.number().int().min(0).max(20).optional().default(0),
   waypoints: z.array(lngLat).optional().default([]),
+  controlPoints: z.array(lngLat).optional().default([]),
+});
+
+export const loopPoiSuggestSchema = z.object({
+  routeCoords: z.array(lngLat).min(2),
+  poiTypes: z.array(z.string()).optional().default(["nature", "tourism", "historic"]),
+  max: z.number().int().min(1).max(30).optional().default(15),
+});
+
+export const addPoiSchema = z.object({
+  poi: lngLat,
+  legs: z
+    .array(
+      z.object({
+        from: lngLat,
+        to: lngLat,
+      }).passthrough(),
+    )
+    .min(1),
+  profile: profile.default("foot-walking"),
 });
 
 export const aiRouteSchema = z
   .object({
     start: lngLat,
     end: lngLat.optional(),
-    distance: z.number().min(500).max(100_000).optional(), // metres, loop only
+    distance: z.number().min(500).max(100_000).optional(),
     profile: profile.default("foot-walking"),
     elevationPreference,
     area: z.string().max(200).optional(),

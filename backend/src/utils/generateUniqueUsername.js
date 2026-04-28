@@ -1,15 +1,17 @@
 import { prisma } from "../config/db.js";
 
 export const generateUniqueUsername = async (displayName) => {
-  const base = (displayName ?? "user")
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[^a-z0-9]/g, "")
-    .slice(0, 20) || "user";
+  const base =
+    (displayName ?? "user")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[^a-z0-9]/g, "")
+      .slice(0, 20) || "user";
 
-  // Build a batch of candidates and check them all in one query instead of
-  // up to 10 sequential findUnique calls.
-  const candidates = [base, ...Array.from({ length: 9 }, (_, i) => `${base}${i + 1}`)];
+  const candidates = [
+    base,
+    ...Array.from({ length: 9 }, (_, i) => `${base}${i + 1}`),
+  ];
 
   const taken = await prisma.user.findMany({
     where: { username: { in: candidates } },

@@ -1,5 +1,3 @@
-// controllers/aiRoutingController.js — AI route generation handlers
-
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {
   sendError,
@@ -9,10 +7,8 @@ import {
   Errors,
   Success,
 } from "../utils/responses.js";
-import { runAiPipeline } from "../lib/ai-pipeline.js";
+import { runAiPipeline } from "../lib/ai/pipeline.js";
 
-// Thin JSON wrapper — runs the pipeline with a no-op progress callback and
-// returns the final payload in one shot.
 export const aiRouting = asyncHandler(async (req, res) => {
   try {
     const data = await runAiPipeline(req.body);
@@ -25,8 +21,6 @@ export const aiRouting = asyncHandler(async (req, res) => {
   }
 });
 
-// SSE wrapper — streams `stage` events at each pipeline phase, then a single
-// `done` event with the final payload (or `error` on failure).
 export const aiRoutingStream = asyncHandler(async (req, res) => {
   const emit = setupSSE(res);
 

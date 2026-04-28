@@ -1,5 +1,3 @@
-// lib/weather.ts
-//
 // Open-Meteo client — https://open-meteo.com
 //
 // Zero-key, zero-signup, commercial-friendly (CC-BY 4.0) weather API. The

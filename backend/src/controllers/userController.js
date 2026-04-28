@@ -2,14 +2,12 @@ import { prisma } from "../config/db.js";
 import bcrypt from "bcryptjs";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { Errors, Success, sendError, sendSuccess } from "../utils/responses.js";
-import { uploadProfilePicture, deleteFile } from "../utils/uploadService.js";
 
 const USER_SELECT = {
   id: true,
   username: true,
   email: true,
   bio: true,
-  profilePicture: true,
   hasOnboarded: true,
   createdAt: true,
   password: true,
@@ -47,25 +45,11 @@ export const editUserProfile = asyncHandler(async (req, res) => {
     }
   }
 
-  let profilePictureUrl = undefined;
-
-  if (req.file) {
-    if (req.user.profilePicture) {
-      await deleteFile(req.user.profilePicture).catch(() => {});
-    }
-
-    const { url } = await uploadProfilePicture(req.file);
-    profilePictureUrl = url;
-  }
-
   const user = await prisma.user.update({
     where: { id: req.user.id },
     data: {
       ...(username !== undefined && { username }),
       ...(bio !== undefined && { bio }),
-      ...(profilePictureUrl !== undefined && {
-        profilePicture: profilePictureUrl,
-      }),
     },
     select: { ...USER_SELECT, updatedAt: true },
   });
@@ -75,7 +59,6 @@ export const editUserProfile = asyncHandler(async (req, res) => {
 
 export const setPassword = asyncHandler(async (req, res) => {
   const { password } = req.body;
-  // password validation handled by setPasswordSchema
 
   if (req.user.password) {
     return sendError(res, Errors.PASSWORD_ALREADY_SET);

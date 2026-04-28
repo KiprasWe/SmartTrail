@@ -4,7 +4,6 @@ export const TRANSPORT = {
   running: "running",
   cycling: "cycling",
   mtb: "mtb",
-  ebike: "ebike",
 } as const;
 
 export type Transport = (typeof TRANSPORT)[keyof typeof TRANSPORT];

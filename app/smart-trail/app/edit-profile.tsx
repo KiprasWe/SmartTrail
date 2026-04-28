@@ -13,16 +13,11 @@ import {
   useColorScheme,
 } from "react-native";
 import { useRouter } from "expo-router";
-import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
-import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useProfileStore } from "@/store/use-profile-store";
 import { Colors } from "@/constants/theme";
 import { useTranslation } from "@/hooks/use-translation";
 import { ScreenHeader } from "@/components/ui/screen-header";
-
-const AVATAR_PLACEHOLDER = (name: string) =>
-  `https://ui-avatars.com/api/?background=16A34A&color=fff&size=256&bold=true&name=${encodeURIComponent(name)}`;
 
 const BIO_MAX = 160;
 
@@ -36,26 +31,14 @@ export default function EditProfileScreen() {
 
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
-  const [picture, setPicture] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (profile) {
       setUsername(profile.username ?? "");
       setBio(profile.bio ?? "");
-      setPicture(profile.profilePicture ?? "");
     }
   }, [profile?.id]);
-
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
-    });
-    if (!result.canceled) setPicture(result.assets[0].uri);
-  };
 
   const handleSave = async () => {
     if (!username.trim()) {
@@ -68,8 +51,6 @@ export default function EditProfileScreen() {
       if (username.trim() !== (profile?.username ?? ""))
         patch.username = username.trim();
       if (bio !== (profile?.bio ?? "")) patch.bio = bio;
-      if (picture !== (profile?.profilePicture ?? ""))
-        patch.profilePicture = picture;
 
       if (Object.keys(patch).length > 0) {
         const updated = await updateProfile(patch);
@@ -77,20 +58,24 @@ export default function EditProfileScreen() {
       }
       router.back();
     } catch (err: any) {
-      Alert.alert(t("common.error"), err.response?.data?.error ?? err.message ?? "Failed to save.");
+      Alert.alert(
+        t("common.error"),
+        err.response?.data?.error ?? err.message ?? "Failed to save.",
+      );
     } finally {
       setSaving(false);
     }
   };
-
-  const avatarUri = picture || AVATAR_PLACEHOLDER(username || "User");
 
   const saveChip = (
     <TouchableOpacity
       onPress={handleSave}
       disabled={saving}
       activeOpacity={0.75}
-      style={[styles.saveChip, { backgroundColor: saving ? ts.tint + "60" : ts.tint }]}
+      style={[
+        styles.saveChip,
+        { backgroundColor: saving ? ts.tint + "60" : ts.tint },
+      ]}
     >
       {saving ? (
         <ActivityIndicator color="#fff" size="small" />
@@ -116,25 +101,19 @@ export default function EditProfileScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scroll}
       >
-        {/* Avatar */}
-        <TouchableOpacity
-          onPress={pickImage}
-          activeOpacity={0.85}
-          style={styles.avatarWrap}
-        >
-          <Image source={{ uri: avatarUri }} style={[styles.avatar, { borderColor: ts.border, backgroundColor: ts.surface }]} />
-          <View style={styles.cameraBtn}>
-            <IconSymbol name="camera.fill" size={14} color="#fff" />
-          </View>
-        </TouchableOpacity>
-
         {/* Profile fields */}
-        <Text style={[styles.sectionLabel, { color: ts.muted }]}>{t("edit-profile.section-profile").toUpperCase()}</Text>
-        <View style={[styles.section, { backgroundColor: ts.surface, borderColor: ts.border }]}>
-
+        <Text style={[styles.sectionLabel, { color: ts.muted }]}>
+          {t("edit-profile.section-profile").toUpperCase()}
+        </Text>
+        <View
+          style={[
+            styles.section,
+            { backgroundColor: ts.surface, borderColor: ts.border },
+          ]}
+        >
           {/* Username */}
           <View style={styles.inputRow}>
-            <IconSymbol name="person.fill" size={15} color={ts.muted} />
+            <Ionicons name="person" size={15} color={ts.muted} />
             <TextInput
               value={username}
               onChangeText={setUsername}
@@ -160,7 +139,12 @@ export default function EditProfileScreen() {
               textAlignVertical="top"
               style={[styles.input, styles.bioInput, { color: ts.text }]}
             />
-            <Text style={[styles.charCount, { color: bio.length > BIO_MAX * 0.9 ? ts.danger : ts.muted }]}>
+            <Text
+              style={[
+                styles.charCount,
+                { color: bio.length > BIO_MAX * 0.9 ? ts.danger : ts.muted },
+              ]}
+            >
               {bio.length}/{BIO_MAX}
             </Text>
           </View>
@@ -169,14 +153,33 @@ export default function EditProfileScreen() {
         {/* Email — read-only */}
         {profile?.email ? (
           <>
-            <Text style={[styles.sectionLabel, { color: ts.muted }]}>{t("edit-profile.section-account").toUpperCase()}</Text>
-            <View style={[styles.section, { backgroundColor: ts.surface, borderColor: ts.border }]}>
+            <Text style={[styles.sectionLabel, { color: ts.muted }]}>
+              {t("edit-profile.section-account").toUpperCase()}
+            </Text>
+            <View
+              style={[
+                styles.section,
+                { backgroundColor: ts.surface, borderColor: ts.border },
+              ]}
+            >
               <View style={styles.inputRow}>
                 <Ionicons name="mail-outline" size={15} color={ts.muted} />
-                <Text style={[styles.input, styles.readonlyText, { color: ts.muted }]} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.input,
+                    styles.readonlyText,
+                    { color: ts.muted },
+                  ]}
+                  numberOfLines={1}
+                >
                   {profile.email}
                 </Text>
-                <View style={[styles.lockedBadge, { backgroundColor: ts.bg, borderColor: ts.border }]}>
+                <View
+                  style={[
+                    styles.lockedBadge,
+                    { backgroundColor: ts.bg, borderColor: ts.border },
+                  ]}
+                >
                   <Ionicons name="lock-closed" size={10} color={ts.muted} />
                 </View>
               </View>
@@ -212,17 +215,6 @@ const styles = StyleSheet.create({
     height: 88,
     borderRadius: 44,
     borderWidth: 1,
-  },
-  cameraBtn: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.65)",
-    alignItems: "center",
-    justifyContent: "center",
   },
 
   sectionLabel: {

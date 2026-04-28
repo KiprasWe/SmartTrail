@@ -13,22 +13,13 @@ import {
   setPasswordSchema,
   changePasswordSchema,
 } from "../validators/userValidators.js";
-import { uploadMiddleware } from "../middleware/uploadMiddleware.js";
-
-// Accept the sensitiveOpsLimiter injected from server.js so we don't need to
-// re-create a rate limiter here (it must share state with server.js's instance).
 export default function userRoutes(sensitiveOpsLimiter) {
   const router = express.Router();
 
   router.use(authMiddleware);
 
   router.get("/me", getUserProfile);
-  router.patch(
-    "/me",
-    uploadMiddleware,
-    validate(editUserProfileSchema),
-    editUserProfile,
-  );
+  router.patch("/me", validate(editUserProfileSchema), editUserProfile);
   router.post(
     "/me/set-password",
     sensitiveOpsLimiter,

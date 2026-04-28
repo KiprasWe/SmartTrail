@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
-import { useAuthStore } from "@/store/use-auth-store";
 import { useProfileStore } from "@/store/use-profile-store";
 import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
 import { Ionicons } from "@expo/vector-icons";
@@ -101,7 +100,12 @@ export default function ProfileScreen() {
       } else {
         refreshSavedRoutes().catch(() => {});
       }
-    }, [fetchProfile, bootstrapSavedRoutes, refreshSavedRoutes, savedRoutes.length]),
+    }, [
+      fetchProfile,
+      bootstrapSavedRoutes,
+      refreshSavedRoutes,
+      savedRoutes.length,
+    ]),
   );
 
   if (loading && !profile) {
@@ -124,15 +128,16 @@ export default function ProfileScreen() {
         <View style={[styles.centeredFill, { gap: 12 }]}>
           <Text style={[styles.errorText, { color: ts.muted }]}>{error}</Text>
           <TouchableOpacity onPress={fetchProfile}>
-            <Text style={[styles.retryText, { color: ts.tint }]}>{t("profile.try-again")}</Text>
+            <Text style={[styles.retryText, { color: ts.tint }]}>
+              {t("profile.try-again")}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
     );
   }
 
-  const avatarUri =
-    profile?.profilePicture || AVATAR_PLACEHOLDER(profile?.username ?? "User");
+  const avatarUri = AVATAR_PLACEHOLDER(profile?.username ?? "User");
 
   return (
     <View style={[styles.root, { backgroundColor: ts.bg }]}>
@@ -173,7 +178,10 @@ export default function ProfileScreen() {
         <View style={styles.profileSection}>
           <Image
             source={{ uri: avatarUri }}
-            style={[styles.avatar, { borderColor: ts.border, backgroundColor: ts.surface }]}
+            style={[
+              styles.avatar,
+              { borderColor: ts.border, backgroundColor: ts.surface },
+            ]}
           />
           <Text style={[styles.username, { color: ts.text }]}>
             {profile?.username ?? "—"}
@@ -275,7 +283,11 @@ export default function ProfileScreen() {
                       {isDeleting ? (
                         <ActivityIndicator size="small" color={ts.muted} />
                       ) : (
-                        <Ionicons name="trash-outline" size={18} color={ts.muted} />
+                        <Ionicons
+                          name="trash-outline"
+                          size={18}
+                          color={ts.muted}
+                        />
                       )}
                     </TouchableOpacity>
                   </View>
@@ -285,7 +297,6 @@ export default function ProfileScreen() {
           )}
         </View>
       </ScrollView>
-
     </View>
   );
 }

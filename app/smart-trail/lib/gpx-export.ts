@@ -1,5 +1,3 @@
-// lib/gpx-export.ts
-
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 

@@ -1,5 +1,3 @@
-// lib/errorMessages.ts
-
 /** Extract a human-readable message from an unknown catch value. */
 export function getErrMessage(err: unknown, fallback = "Unknown error"): string {
   if (typeof err !== "object" || err === null) return fallback;

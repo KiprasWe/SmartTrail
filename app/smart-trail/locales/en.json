@@ -6,7 +6,9 @@
     "retry": "Retry",
     "try-again": "Try again",
     "error": "Error",
-    "required": "Required"
+    "required": "Required",
+    "something-went-wrong": "Something went wrong",
+    "unexpected-error": "An unexpected error occurred."
   },
   "auth": {
     "signIn": "Sign In",
@@ -25,7 +27,8 @@
     "fields": {
       "username": "Username",
       "email": "Email",
-      "password": "Password"
+      "password": "Password",
+      "confirmPassword": "Confirm Password"
     },
     "errors": {
       "generic": "Error"
@@ -40,7 +43,6 @@
     "your-routes": "My trails",
     "sign-out": "Sign out",
     "edit-profile": "Edit Profile",
-    "change-photo": "Change Photo",
     "username": "Username",
     "username-placeholder": "Your username",
     "bio": "Bio",
@@ -72,7 +74,10 @@
     "sign-out": "Sign Out",
     "sign-out-confirm": "Are you sure you want to sign out?",
     "set-password-subtitle": "Add a password to your account",
-    "change-password-subtitle": "Update your current password"
+    "change-password-subtitle": "Update your current password",
+    "appearance": "Appearance",
+    "language-en": "English",
+    "language-lt": "Lithuanian"
   },
   "edit-profile": {
     "title": "Edit Profile",
@@ -114,10 +119,8 @@
     "slide1-body": "Describe what you want — a 5km loop near the park, a riverside run — and SmartTrail builds the route for you.",
     "slide2-title": "Explore & Save",
     "slide2-body": "Browse generated routes, save your favourites, and take them offline so you're ready even without signal.",
-    "slide3-title": "Track Your Progress",
-    "slide3-body": "Save your favourite routes, review elevation and distance, and take them offline so you're ready even without signal.",
-    "slide4-title": "Enable Location",
-    "slide4-body": "SmartTrail uses your location to centre the map and generate routes near you. It's never shared without your consent.",
+    "slide3-title": "Enable Location",
+    "slide3-body": "SmartTrail uses your location to centre the map and generate routes near you. It's never shared without your consent.",
     "allow-location": "Allow Location",
     "next": "Next",
     "get-started": "Get Started",
@@ -167,14 +170,15 @@
     "error-no-end": "Please choose an end location.",
     "poi-nature": "Nature",
     "poi-viewpoints": "Viewpoints",
-    "poi-historic": "Historic",
+    "poi-historic": "History",
     "poi-food": "Food & Drink",
-    "poi-arts": "Arts & Culture",
+    "poi-arts": "Art & Culture",
     "poi-leisure": "Leisure",
     "section-locations": "Locations",
     "section-transport": "Transport",
     "section-elevation": "Elevation",
     "section-pois": "Points of Interest",
+    "poi-count-label": "Visit up to",
     "section-ai-prompt": "Describe your route",
     "section-start": "Starting Point",
     "section-stops": "Must Stops",
@@ -234,7 +238,9 @@
     "export-gpx": "Export GPX",
     "export-gpx-error": "Could not export the route.",
     "navigate-to-start": "Navigate to start",
-    "navigate-to-start-error": "Could not open Maps."
+    "navigate-to-start-error": "Could not open Maps.",
+    "loop-snapped-to-min": "Distance set to %{km} km — that's the minimum loop through your stops.",
+    "loop-auto-extended": "Loop extended to %{km} km to reach your stop."
   },
   "weather": {
     "today": "Today",

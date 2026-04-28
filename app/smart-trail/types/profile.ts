@@ -3,7 +3,6 @@ export interface UserProfile {
   username: string;
   email: string;
   bio?: string | null;
-  profilePicture?: string | null;
   createdAt: string;
   hasPassword: boolean;
 }
@@ -11,5 +10,4 @@ export interface UserProfile {
 export interface EditForm {
   username: string;
   bio: string;
-  profilePicture: string;
 }

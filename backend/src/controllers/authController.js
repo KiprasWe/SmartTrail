@@ -41,7 +41,7 @@ export const googleAuth = asyncHandler(async (req, res) => {
     return sendError(res, Errors.ID_TOKEN_INVALID);
   }
 
-  const { sub: googleId, email, name, picture } = payload;
+  const { sub: googleId, email, name } = payload;
 
   // OAuth jau susietas
   const existingOAuth = await prisma.oAuthAccount.findUnique({
@@ -58,15 +58,10 @@ export const googleAuth = asyncHandler(async (req, res) => {
       ...tokens,
     });
   }
-
-  // If a local account exists with the same email, link the OAuth account
-  // only when the Google-verified email matches exactly. This prevents an
-  // attacker from taking over an existing account by creating a Google
-  // account with an email they don't actually control in our system.
   const existingUser = await prisma.user.findUnique({ where: { email } });
 
   if (existingUser) {
-    // email from Google payload is already verified by Google — safe to link
+    // email sutampa, bet nera google oauth paskyros
     await prisma.oAuthAccount.create({
       data: {
         provider: "google",
@@ -87,7 +82,6 @@ export const googleAuth = asyncHandler(async (req, res) => {
     data: {
       email,
       username: await generateUniqueUsername(name),
-      profilePicture: picture,
       oAuthAccounts: {
         create: { provider: "google", providerId: googleId },
       },
@@ -160,9 +154,6 @@ export const refresh = asyncHandler(async (req, res) => {
     return sendError(res, Errors.INVALID_REFRESH_TOKEN);
   }
 
-  // Check expiry BEFORE deleting so we don't strand the client with neither
-  // a valid token nor a useful error. Both branches delete the token so it
-  // can only be used once regardless of the outcome.
   if (storedToken.expiresAt < new Date()) {
     await prisma.refreshToken.delete({ where: { id: storedToken.id } });
     return sendError(res, Errors.REFRESH_TOKEN_EXPIRED);

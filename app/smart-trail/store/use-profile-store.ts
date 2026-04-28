@@ -1,30 +1,12 @@
-// store/use-profile-store.ts
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
 import { useAuthStore } from "./use-auth-store";
 import { getErrMessage } from "@/lib/error-messages";
+import type { UserProfile, EditForm } from "@/types/profile";
+
+export type { UserProfile, EditForm };
 
 const CACHE_KEY = "smarttrail_profile";
-
-export interface UserProfile {
-  id: string;
-  username: string;
-  email: string;
-  bio?: string | null;
-  profilePicture?: string | null;
-  createdAt: string;
-  hasPassword: boolean;
-}
-
-export interface EditForm {
-  username: string;
-  bio: string;
-  profilePicture: string; // local URI (file://) or remote URL or empty
-}
-
-const isLocalUri = (uri: string) =>
-  uri.startsWith("file://") || uri.startsWith("/");
 
 type ProfileStore = {
   profile: UserProfile | null;
@@ -94,37 +76,6 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
 
   updateProfile: async (form) => {
     const { authFetch } = useAuthStore.getState();
-    const hasNewPicture = form.profilePicture && isLocalUri(form.profilePicture);
-
-    if (hasNewPicture) {
-      const formData = new FormData();
-      const uri = form.profilePicture!;
-      const filename = uri.split("/").pop() ?? "profile.jpg";
-      const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
-      const mimeType =
-        ext === "png"
-          ? "image/png"
-          : ext === "webp"
-            ? "image/webp"
-            : "image/jpeg";
-
-      formData.append("profilePicture", {
-        uri: Platform.OS === "android" ? uri : uri.replace("file://", ""),
-        name: filename,
-        type: mimeType,
-      } as any);
-
-      if (form.username) formData.append("username", form.username);
-      if (form.bio !== undefined) formData.append("bio", form.bio);
-
-      const { data } = await authFetch("/user/me", {
-        method: "PATCH",
-        data: formData,
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      return data.data.user;
-    }
-
     const { username, bio } = form;
     const { data } = await authFetch("/user/me", {
       method: "PATCH",
@@ -156,9 +107,6 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
   },
 }));
 
-// Clear profile data whenever the user signs out. This replaces the dynamic
-// require("./use-profile-store") that was in use-auth-store.ts _clearAuth to
-// break the circular dependency — now the import is one-way: profile → auth.
 useAuthStore.subscribe(
   (state, prevState) => {
     if (prevState.user !== null && state.user === null) {

@@ -1,5 +1,3 @@
-// store/use-saved-routes-store.ts
-//
 // Offline-first cache of the user's saved routes. List items live in one
 // AsyncStorage key; full route details (geometry + POIs) live under per-id
 // keys so that opening a saved route works without network.

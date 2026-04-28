@@ -13,9 +13,13 @@ datasource db {
 
 }
 
+generator erd {
+  provider = "prisma-erd-generator"
+  output   = "./ERD.svg"
+}
+
 model User {
   id String @id @default(uuid())
-  profilePicture String?
   username String @unique
   bio String?
   email String @unique
@@ -68,10 +72,12 @@ model Route {
   duration     Int
   ascent       Int?
   descent      Int?
+
   geometry     Json
   bbox         Json
-  instructions Json?
   elevationProfile Json?
+  pois         Json?
+
 
   startLat     Float
   startLng     Float
@@ -80,19 +86,10 @@ model Route {
   endLng       Float?
   endLabel     String?
 
-  aiPlan       Json?
-  pois         Json?
-
-  variantLabel   String?
-  generationId   String?
-
-  isFavorite   Boolean  @default(false)
-
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([userId])
-  @@index([generationId])
 }
 
 enum RouteMode {

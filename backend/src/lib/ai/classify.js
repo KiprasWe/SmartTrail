@@ -216,6 +216,11 @@ const INTENT_SCHEMA = {
         description: "Named town/village if specified, else empty string.",
       },
       count: { type: Type.INTEGER, description: "Max results to fetch, 1-8." },
+      force_via_city: {
+        type: Type.STRING,
+        description:
+          "City/town name when the user explicitly wants the route to go THROUGH that place (e.g. 'eat in Kaunas', 'stop in Trakai'). The pipeline will geocode this and add it as a mandatory routing waypoint. Empty string for generic searches or when the city is already on the route.",
+      },
     },
     required: [
       "theme",
@@ -223,6 +228,7 @@ const INTENT_SCHEMA = {
       "location_scope",
       "specific_area",
       "count",
+      "force_via_city",
     ],
     propertyOrdering: [
       "theme",
@@ -230,6 +236,7 @@ const INTENT_SCHEMA = {
       "location_scope",
       "specific_area",
       "count",
+      "force_via_city",
     ],
   },
 };
@@ -314,6 +321,14 @@ function buildIntentPrompt({
     `6. QUANTITY: broad category ("parks", "nature", "historic sites") → count=6-8, be generous.`,
     `7. No preferences → count=6-8, pick the most interesting for this profile and region.`,
     `8. Split big themes: "history and nature" → separate intents for each.`,
+    `9. force_via_city: set ONLY when the user explicitly says they want to GO THROUGH,`,
+    `   STOP IN, or VISIT a specific city/town that may be OFF the direct route.`,
+    `   Examples where you SHOULD set it:`,
+    `     "I want to eat in Kaunas" → force_via_city="Kaunas", specific_area="Kaunas"`,
+    `     "stop in Trakai for coffee" → force_via_city="Trakai", specific_area="Trakai"`,
+    `     "pass through Vilnius" → force_via_city="Vilnius"`,
+    `   Leave EMPTY for: generic categories ("some cafes"), places along the natural route,`,
+    `   or when the city IS the start/end point (it's already on the route).`,
     langInstr,
   ]
     .filter(Boolean)
@@ -341,6 +356,9 @@ function normalizeIntents(parsed) {
           .trim()
           .slice(0, 100),
         count: Math.max(1, Math.min(Number(p.count) || 3, 8)),
+        force_via_city: String(p.force_via_city ?? "")
+          .trim()
+          .slice(0, 100),
       };
     })
     .filter(Boolean)

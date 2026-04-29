@@ -29,8 +29,7 @@ export function ElevationProfile({
   const chartH = height - PAD.top - PAD.bottom;
 
   const { fillPath, linePath, yLabels } = useMemo(() => {
-    if (!elevations.length)
-      return { fillPath: "", linePath: "", yLabels: [] };
+    if (!elevations.length) return { fillPath: "", linePath: "", yLabels: [] };
 
     const step = Math.max(1, Math.floor(elevations.length / 200));
     const pts = elevations.filter((_, i) => i % step === 0);

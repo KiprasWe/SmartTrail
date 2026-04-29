@@ -29,7 +29,7 @@
         }
       },
       "adaptiveIcon": {
-        "backgroundColor": "#ffffff",
+        "backgroundColor": "#16A34A",
         "foregroundImage": "./assets/icons/adaptive-icon.png",
         "monochromeImage": "./assets/icons/adaptive-icon.png"
       },
@@ -61,10 +61,10 @@
           "image": "./assets/icons/splash-icon-dark.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#16A34A",
           "dark": {
             "image": "./assets/icons/splash-icon-light.png",
-            "backgroundColor": "#000000"
+            "backgroundColor": "#09090B"
           }
         }
       ],

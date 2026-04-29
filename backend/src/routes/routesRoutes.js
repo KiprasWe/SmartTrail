@@ -4,6 +4,7 @@ import {
   loopRouting,
   addPoiToRoute,
   loopPoiSuggestions,
+  aiReroute,
 } from "../controllers/routeGenerationController.js";
 import {
   aiRouting,
@@ -22,6 +23,7 @@ import {
   atoBSchema,
   loopSchema,
   aiRouteSchema,
+  aiRerouteSchema,
   saveRouteSchema,
   updateRouteSchema,
   loopPoiSuggestSchema,
@@ -58,6 +60,13 @@ export default function buildRoutesRouter(generateLimiter) {
     generateLimiter,
     validate(aiRouteSchema),
     aiRoutingStream,
+  );
+  router.post(
+    "/generate-ai/reroute",
+    authMiddleware,
+    generateLimiter,
+    validate(aiRerouteSchema),
+    aiReroute,
   );
   router.post(
     "/add-poi",

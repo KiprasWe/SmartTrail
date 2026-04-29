@@ -33,6 +33,8 @@ function buildLabel(p: Record<string, any>): {
   if (p.city) sub.push(p.city);
   else if (p.town) sub.push(p.town);
   else if (p.village) sub.push(p.village);
+  if (p.county) sub.push(p.county);
+  if (p.state) sub.push(p.state);
   if (p.country) sub.push(p.country);
 
   return {

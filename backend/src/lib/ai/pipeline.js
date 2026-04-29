@@ -14,7 +14,11 @@
 
 import { haversineM, routeBbox, polylineCorridorFilter } from "../geo.js";
 import { generateLoop } from "../loop-algo.js";
-import { reverseGeocodePlaceName, discoverAllPois } from "../places.js";
+import {
+  reverseGeocodePlaceName,
+  discoverAllPois,
+  geocodeCity,
+} from "../places.js";
 import { fetchORSDirections, orsFeatureToRouteData, buildORSElevationOpts } from "../ors.js";
 import { PROFILE_CONFIGS } from "../profiles.js";
 import { PipelineError, Errors } from "../../utils/responses.js";
@@ -316,8 +320,32 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
 
   const categoryPois =
     mode !== "named" && effectiveIntents.length
-      ? await searchIntentsByZone(effectiveIntents, zones, placesCtx)
+      ? await searchIntentsByZone(effectiveIntents, zones, placesCtx, skeletonCoords)
       : [];
+
+  // ── Geocode force_via_city intents ────────────────────────────────────────
+  // When Gemini marks a city as force_via_city, we geocode it and inject it
+  // as a mandatory ORS routing waypoint so the route physically goes through
+  // that city (not just searches near it).
+  const forcedCityNames = [
+    ...new Set(
+      effectiveIntents
+        .map((i) => i.force_via_city)
+        .filter((c) => typeof c === "string" && c.length > 0),
+    ),
+  ];
+
+  const forcedCityCoords = (
+    await Promise.all(
+      forcedCityNames.map((city) => geocodeCity(city, lang).catch(() => null)),
+    )
+  ).filter(Boolean);
+
+  if (forcedCityCoords.length > 0) {
+    console.log(
+      `[aiRouting] Force-via cities: [${forcedCityNames.join(", ")}] → ${forcedCityCoords.length} geocoded`,
+    );
+  }
 
   console.log(
     `[aiRouting] Pool sources — category: ${categoryPois.length}, named: ${namedPois.length}, discovered: ${discoveredPois.length}`,
@@ -365,9 +393,36 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     // Always merge Overpass: ORS POI buffer is capped at 2km per zone, so
     // 3-zone routes have large gaps between covered areas. Overpass covers
     // the full corridor bbox and Gemini curation trims it to what fits.
-    enrichedPool = dedupPois([...categoryPois, ...filteredDiscovered]);
+    // POIs tagged _fromSpecificArea bypass corridor filter — they were found
+    // in a geocoded city the user explicitly asked to visit.
+    const specificAreaPois = categoryPois.filter((p) => p._fromSpecificArea);
+    const regularCategoryPois = categoryPois.filter((p) => !p._fromSpecificArea);
+    const rawPool = dedupPois([...regularCategoryPois, ...filteredDiscovered]);
+
+    // Apply reachability filter to drop barrier-blocked POIs (river/fence/motorway).
+    // Skip if pool is small — not worth the ORS matrix round-trip.
+    // Use actual skeleton distance (not haversine straight-line) so midroute POIs
+    // aren't dropped by MAX_ROUTED_M when the route doubles back or curves a lot.
+    const reachabilityDistKm = skeletonDistanceM > 0 ? skeletonDistanceM / 1000 : distanceKm;
+    const reachabilityPool =
+      skeletonCoords && rawPool.length > 12
+        ? await filterReachablePois(rawPool, skeletonCoords, orsProfile, reachabilityDistKm).catch(
+            (err) => {
+              console.warn(
+                `[reachability] Category mode failed, using raw: ${err.message}`,
+              );
+              return rawPool;
+            },
+          )
+        : rawPool;
+
+    // Re-merge specific-area POIs after reachability (they bypass the barrier check
+    // because they may genuinely be off-corridor by design)
+    enrichedPool = dedupPois([...specificAreaPois, ...reachabilityPool]);
     console.log(
-      `[aiRouting] Category pool: ${categoryPois.length} ORS + ${filteredDiscovered.length} Overpass corridor (${enrichedPool.length} total)`,
+      `[aiRouting] Category pool: ${categoryPois.length} ORS (${specificAreaPois.length} specific-area) + ` +
+        `${filteredDiscovered.length} Overpass → ${reachabilityPool.length} after reachability ` +
+        `→ ${enrichedPool.length} total`,
     );
   } else if (mode === "named") {
     enrichedPool = namedPois;
@@ -384,7 +439,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       mixedPool.filter((p) => !namedIds.has(p.place_id)),
       skeletonCoords,
       orsProfile,
-      distanceKm,
+      skeletonDistanceM > 0 ? skeletonDistanceM / 1000 : distanceKm,
     ).catch((err) => {
       console.warn(
         `[reachability] Failed, using unfiltered pool: ${err.message}`,
@@ -422,6 +477,30 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     (p) => !committedIds.has(p.place_id),
   );
 
+  // Compute each curation-pool POI's fractional position along the skeleton
+  // (0 = start, 1 = end) so the curation prompt can enforce spread.
+  let routePositions = null;
+  if (skeletonCoords?.length > 1) {
+    const cumul = [0];
+    for (let i = 1; i < skeletonCoords.length; i++) {
+      cumul.push(cumul[i - 1] + haversineM(skeletonCoords[i - 1], skeletonCoords[i]));
+    }
+    const totalSkeletonM = cumul[cumul.length - 1];
+
+    if (totalSkeletonM > 0) {
+      routePositions = new Map();
+      for (const p of curationPool) {
+        let minDist = Infinity;
+        let bestIdx = 0;
+        for (let i = 0; i < skeletonCoords.length; i++) {
+          const d = haversineM([p.lng, p.lat], skeletonCoords[i]);
+          if (d < minDist) { minDist = d; bestIdx = i; }
+        }
+        routePositions.set(p.place_id, cumul[bestIdx] / totalSkeletonM);
+      }
+    }
+  }
+
   let finalPois;
   const curatedPois = await tourGuideCurate({
     pois: curationPool,
@@ -435,6 +514,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     mode,
     namedPois,
     userNamedPlaceIds,
+    routePositions,
   });
 
   if (curatedPois) {
@@ -518,8 +598,33 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     return snapToSkeleton([p.lng, p.lat], skeletonCoords, profile);
   });
 
+  // Merge forced city coords into the waypoint list, sorted along the route.
+  // City anchors are droppable (protectedCount unchanged) — if ORS can't reach
+  // a city anchor it falls back gracefully via fetchORSWithFallback.
+  let allWaypointCoords = waypointCoords;
+  if (forcedCityCoords.length > 0) {
+    if (hasEnd) {
+      // Sort everything along the start→end line then merge
+      const [sx, sy] = start;
+      const dx = end[0] - sx;
+      const dy = end[1] - sy;
+      const lenSq = dx * dx + dy * dy || 1;
+      const project = ([x, y]) => ((x - sx) * dx + (y - sy) * dy) / lenSq;
+      allWaypointCoords = [...forcedCityCoords, ...waypointCoords].sort(
+        (a, b) => project(a) - project(b),
+      );
+    } else {
+      // For loops prepend city anchors; loop-algo TSP re-orders stops anyway
+      allWaypointCoords = [...forcedCityCoords, ...waypointCoords];
+    }
+    console.log(
+      `[aiRouting] Injected ${forcedCityCoords.length} city anchor(s) → ` +
+        `${allWaypointCoords.length} total waypoints`,
+    );
+  }
+
   console.log(
-    `[aiRouting] Routing through ${waypointCoords.length} waypoints (${finalPois.length - waypointCoords.length} optional on map)`,
+    `[aiRouting] Routing through ${allWaypointCoords.length} waypoints (${finalPois.length - waypointCoords.length} optional on map)`,
   );
 
   // ── A→B routing ──
@@ -530,7 +635,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       orsResult = await fetchORSWithFallback(
         orsProfile,
         start,
-        waypointCoords,
+        allWaypointCoords,
         end,
         orsElevOpts,
         userWaypointsInEssential.length,
@@ -585,7 +690,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       targetM: tripDistanceM,
       orsProfile,
       orsElevOpts,
-      stops: waypointCoords,
+      stops: allWaypointCoords,
     });
   } catch (err) {
     throw new PipelineError(

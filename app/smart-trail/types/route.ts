@@ -1,7 +1,5 @@
 export type Coords = [number, number]; // [lng, lat]
 
-export type RouteMode = "A_TO_B" | "LOOP" | "AI";
-
 export interface RouteInstruction {
   instruction: string;
   type: number;
@@ -42,19 +40,12 @@ export interface SavedRouteListItem {
   id: string;
   title: string;
   description: string | null;
-  mode: RouteMode;
   transport: string;
   distance: number; // metres
   duration: number; // seconds
   ascent: number | null; // metres
   descent: number | null; // metres
   bbox: [number, number, number, number];
-  startLat: number;
-  startLng: number;
-  startLabel: string | null;
-  endLat: number | null;
-  endLng: number | null;
-  endLabel: string | null;
   variantLabel: string | null;
   isFavorite: boolean;
   createdAt: string;
@@ -74,7 +65,6 @@ export interface SavedRoute extends SavedRouteListItem {
 export interface SaveRouteInput {
   title: string;
   description?: string;
-  mode: RouteMode;
   transport: string;
   distance: number;
   duration: number;
@@ -84,12 +74,6 @@ export interface SaveRouteInput {
   bbox: [number, number, number, number];
   instructions?: RouteInstruction[];
   elevationProfile?: ElevationProfile;
-  startLat: number;
-  startLng: number;
-  startLabel?: string;
-  endLat?: number;
-  endLng?: number;
-  endLabel?: string;
   aiPlan?: AiPlan;
   pois?: PoiFeature[];
   variantLabel?: string;

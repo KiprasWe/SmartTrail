@@ -1,4 +1,21 @@
 const ORS_API_KEY = process.env.ORS_API_KEY;
+
+// Maps our internal places_type → the OSM tags to query in Overpass.
+// Used by searchCorridorByType to build type-filtered corridor queries.
+const TYPE_TO_OSM_TAGS = {
+  tourist_attraction: [["tourism", ["attraction", "viewpoint", "artwork", "gallery"]]],
+  historical_landmark: [
+    ["historic", ["castle", "ruins", "archaeological_site", "building", "manor", "fort", "city_gate", "battlefield", "monument", "memorial"]],
+  ],
+  museum: [["tourism", ["museum"]], ["amenity", ["museum"]]],
+  church: [["historic", ["church"]], ["amenity", ["place_of_worship"]]],
+  monument: [["historic", ["monument", "memorial", "wayside_shrine", "wayside_cross"]]],
+  park: [["leisure", ["park", "nature_reserve", "garden"]], ["tourism", ["picnic_site"]]],
+  national_park: [["leisure", ["nature_reserve"]]],
+  restaurant: [["amenity", ["restaurant"]]],
+  cafe: [["amenity", ["cafe"]]],
+  bar: [["amenity", ["bar", "pub"]]],
+};
 const NOMINATIM_EMAIL = process.env.NOMINATIM_EMAIL ?? "student@university.lt";
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -427,6 +444,82 @@ async function searchORS({ places_type, lat, lng, radiusM, count }) {
   }
 }
 
+function skeletonHaversineM([lng1, lat1], [lng2, lat2]) {
+  const R = 6_371_000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function sampleSkeleton(coords, stepM) {
+  if (!coords?.length) return [];
+  const result = [coords[0]];
+  let accumulated = 0;
+  for (let i = 1; i < coords.length; i++) {
+    accumulated += skeletonHaversineM(coords[i - 1], coords[i]);
+    if (accumulated >= stepM) {
+      result.push(coords[i]);
+      accumulated = 0;
+    }
+  }
+  const last = coords[coords.length - 1];
+  if (result[result.length - 1] !== last) result.push(last);
+  return result;
+}
+
+// Overpass corridor search for a specific POI type along a route skeleton.
+// Samples the skeleton every stepM metres and fires a single multi-center
+// Overpass query — bypasses the ORS POI API's hard 2km buffer cap and covers
+// the full corridor rather than just 2-3 zone anchor points.
+export async function searchCorridorByType(
+  skeletonCoords,
+  places_type,
+  radiusM = 3_000,
+  count = 20,
+  stepM = 5_000,
+) {
+  if (!skeletonCoords?.length) return [];
+
+  const tagGroups =
+    TYPE_TO_OSM_TAGS[places_type] ?? TYPE_TO_OSM_TAGS.tourist_attraction;
+  const samples = sampleSkeleton(skeletonCoords, stepM);
+
+  const lines = [];
+  for (const [lng, lat] of samples) {
+    for (const [key, values] of tagGroups) {
+      for (const val of values) {
+        lines.push(`nwr["${key}"="${val}"](around:${radiusM},${lat.toFixed(6)},${lng.toFixed(6)});`);
+      }
+    }
+  }
+
+  const query = `[out:json][timeout:30];\n(\n  ${lines.join("\n  ")}\n);\nout center tags;`;
+
+  try {
+    const elements = await overpassQuery(query);
+    const pois = elements.map(overpassElementToPoi).filter(Boolean);
+
+    const seen = new Set();
+    const deduped = pois.filter((p) => {
+      if (seen.has(p.place_id)) return false;
+      seen.add(p.place_id);
+      return true;
+    });
+
+    console.log(
+      `[places] Corridor search (${places_type}, ${samples.length} samples, r=${(radiusM / 1000).toFixed(1)}km): ${deduped.length} results`,
+    );
+    return deduped.slice(0, count);
+  } catch (err) {
+    console.warn(`[places] Corridor search failed: ${err.message}`);
+    return [];
+  }
+}
+
 export async function discoverAllPois({ start, end, hasEnd, zones }) {
   let bboxCoords;
   if (zones?.length) {
@@ -753,6 +846,45 @@ async function fetchNamedPoiNominatim(name, { start, end, hasEnd }) {
     console.warn(
       `[namedPOI] Nominatim fallback failed for "${name}": ${err.message}`,
     );
+    return null;
+  }
+}
+
+export async function geocodeCity(name, lang = "en") {
+  try {
+    const qs = new URLSearchParams({
+      q: name,
+      format: "jsonv2",
+      addressdetails: "1",
+      limit: "5",
+      "accept-language": lang,
+    });
+    const res = await fetch(`${NOMINATIM_BASE}/search?${qs}`, {
+      headers: nominatimHeaders(),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const results = await res.json();
+    if (!results.length) {
+      console.log(`[geocodeCity] No results for "${name}"`);
+      return null;
+    }
+    // Prefer settlement types over POI results
+    const settlement = results.find((r) =>
+      ["city", "town", "village", "municipality", "administrative"].includes(
+        r.addresstype ?? r.type,
+      ),
+    );
+    const r = settlement ?? results[0];
+    const lat = parseFloat(r.lat);
+    const lng = parseFloat(r.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    console.log(
+      `[geocodeCity] "${name}" → [${lng.toFixed(4)}, ${lat.toFixed(4)}]`,
+    );
+    return [lng, lat];
+  } catch (err) {
+    console.warn(`[geocodeCity] Failed for "${name}": ${err.message}`);
     return null;
   }
 }

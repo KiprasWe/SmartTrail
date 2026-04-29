@@ -12,7 +12,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
 import { useTranslation } from "@/hooks/use-translation";
-import { poiIcon, placePhotoUrl, openExternal } from "@/lib/route-map-helpers";
+import { poiIcon, placePhotoUrl, openExternal, translatePoiCategory, poiDisplayName } from "@/lib/route-map-helpers";
 import type { PoiFeature, GenParams } from "@/types/route";
 
 type Props = {
@@ -131,11 +131,11 @@ function PoiBody({
         )}
         <View style={{ flex: 1 }}>
           <Text style={[styles.name, { color: c.text }]} numberOfLines={2}>
-            {props.name}
+            {poiDisplayName(props.name, props.category, t)}
           </Text>
           {props.category && (
             <Text style={[styles.category, { color: c.muted }]} numberOfLines={1}>
-              {props.category.replace(/_/g, " ")}
+              {translatePoiCategory(props.category, t)}
             </Text>
           )}
         </View>

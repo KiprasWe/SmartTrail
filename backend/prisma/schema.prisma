@@ -36,7 +36,7 @@ model User {
 
 model OAuthAccount {
   id String @id @default(uuid())
-  provider String // google, apple, github ir kt.
+  provider String // google
   providerId String
 
   userId String
@@ -65,7 +65,6 @@ model Route {
 
   title        String
   description  String?
-  mode         RouteMode
   transport    String
 
   distance     Int
@@ -78,23 +77,9 @@ model Route {
   elevationProfile Json?
   pois         Json?
 
-
-  startLat     Float
-  startLng     Float
-  startLabel   String?
-  endLat       Float?
-  endLng       Float?
-  endLabel     String?
-
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([userId])
-}
-
-enum RouteMode {
-  A_TO_B
-  LOOP
-  AI
 }
 

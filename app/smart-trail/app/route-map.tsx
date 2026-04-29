@@ -28,12 +28,10 @@ import {
 import { Colors } from "@/constants/theme";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
-import { sampleRoutePoints } from "@/lib/weather";
 import i18n from "@/lib/i18n";
 import { useTranslation } from "@/hooks/use-translation";
 import { useLoadedRoute } from "@/hooks/use-loaded-route";
 import type {
-  RouteMode,
   SaveRouteInput,
   Coords,
   PoiFeature,
@@ -43,7 +41,11 @@ import type {
   LoopMeta,
 } from "@/types/route";
 import { exportGpx, ExportCancelledError } from "@/lib/gpx-export";
-import { ROUTE_COLORS, notifyLoopMeta } from "@/lib/route-map-helpers";
+import {
+  ROUTE_COLORS,
+  notifyLoopMeta,
+  poiDisplayName,
+} from "@/lib/route-map-helpers";
 import { PoiDetailPanel } from "@/components/route-map/poi-detail-panel";
 import { PoiListPanel } from "@/components/route-map/poi-list-panel";
 import { RouteStatsPanel } from "@/components/route-map/route-stats-panel";
@@ -240,75 +242,101 @@ export default function RouteMapScreen() {
       setIsRegenerating(true);
 
       try {
-        const endpoint =
-          genParams.mode === "loop"
-            ? `${process.env.EXPO_PUBLIC_API_URL}/routes/generate-loop`
-            : `${process.env.EXPO_PUBLIC_API_URL}/routes/generate`;
+        let endpoint: string;
+        let body: Record<string, unknown>;
+        let newRoute: RouteVariant;
 
-        const body: Record<string, unknown> = {
-          ...genParams,
-          waypoints: newWaypoints,
-          variantLabel: variant.label,
-        };
-        if (genParams.mode === "loop" && loopControlPoints.length > 0) {
-          body.controlPoints = loopControlPoints;
-        }
+        if (genParams.mode === "ai") {
+          // AI mode: lightweight reroute through current essential POIs ± toggled one.
+          // We don't re-run Gemini — just update the ORS route geometry and flip the
+          // essential flag on the toggled POI in the existing POI list.
+          const essentialCoords = (variant.pois ?? [])
+            .filter((p) => p.properties.essential)
+            .map((p) => p.geometry.coordinates as Coords);
 
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify(body),
-        });
+          const newEssentialCoords = removing
+            ? essentialCoords.filter(
+                (w) => !(w[0] === coords[0] && w[1] === coords[1]),
+              )
+            : [...essentialCoords, coords];
 
-        const json = await res.json();
-        if (!res.ok || json.status !== "success")
-          throw new Error(json.message ?? "Failed");
+          endpoint = `${process.env.EXPO_PUBLIC_API_URL}/routes/generate-ai/reroute`;
+          body = {
+            start: genParams.start,
+            ...(genParams.end
+              ? { end: genParams.end }
+              : { distance: genParams.distance }),
+            profile: genParams.profile,
+            elevationPreference: genParams.elevationPreference,
+            waypoints: newEssentialCoords,
+          };
 
-        if (
-          genParams.mode === "loop" &&
-          Array.isArray(json.data.controlPoints)
-        ) {
-          setLoopControlPoints(json.data.controlPoints);
-        }
-        // Surface TSP-min-snap and auto-extend after re-route so the user knows
-        // why their loop changed length when they added a stop.
-        if (genParams.mode === "loop") {
-          notifyLoopMeta(json.data.loop_meta as LoopMeta | undefined, tr);
-        }
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(body),
+          });
 
-        const newRoute: RouteVariant = json.data.routes[0];
+          const json = await res.json();
+          if (!res.ok || json.status !== "success")
+            throw new Error(json.message ?? "Failed");
 
-        // For AI routes, merge previous POIs back in so optional markers don't
-        // disappear when the pipeline re-runs with a new forced waypoint.
-        // New POIs take priority (they carry updated essential flags); old POIs
-        // that weren't returned are appended as map-only markers.
-        if (genParams.mode === "ai" && variant) {
-          const poiKey = (p: PoiFeature) =>
-            p.properties.place_id ??
-            `${p.geometry.coordinates[0].toFixed(5)},${p.geometry.coordinates[1].toFixed(5)}`;
+          newRoute = json.data.routes[0];
 
-          const newKeys = new Set((newRoute.pois ?? []).map(poiKey));
-
-          const survivingOld = (variant.pois ?? []).filter(
-            (p) => !newKeys.has(poiKey(p)),
-          );
-
-          const merged = [
-            ...(newRoute.pois ?? []),
-            ...survivingOld.map((p, i) => ({
+          // Restore all existing POI markers with the toggled POI's essential
+          // flag flipped. Route geometry updates, POI list stays intact.
+          newRoute.pois = (variant.pois ?? []).map((p) => {
+            const c = p.geometry.coordinates;
+            const isToggled = c[0] === coords[0] && c[1] === coords[1];
+            if (!isToggled) return p;
+            return {
               ...p,
-              properties: {
-                ...p.properties,
-                id: (newRoute.pois?.length ?? 0) + i,
-                essential: false,
-              },
-            })),
-          ];
+              properties: { ...p.properties, essential: !removing },
+            };
+          });
+        } else {
+          // A→B / loop mode: regenerate through the new waypoint set
+          endpoint =
+            genParams.mode === "loop"
+              ? `${process.env.EXPO_PUBLIC_API_URL}/routes/generate-loop`
+              : `${process.env.EXPO_PUBLIC_API_URL}/routes/generate`;
 
-          newRoute.pois = merged;
+          body = {
+            ...genParams,
+            waypoints: newWaypoints,
+            variantLabel: variant.label,
+          };
+          if (genParams.mode === "loop" && loopControlPoints.length > 0) {
+            body.controlPoints = loopControlPoints;
+          }
+
+          const res = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(body),
+          });
+
+          const json = await res.json();
+          if (!res.ok || json.status !== "success")
+            throw new Error(json.message ?? "Failed");
+
+          if (
+            genParams.mode === "loop" &&
+            Array.isArray(json.data.controlPoints)
+          ) {
+            setLoopControlPoints(json.data.controlPoints);
+          }
+          if (genParams.mode === "loop") {
+            notifyLoopMeta(json.data.loop_meta as LoopMeta | undefined, tr);
+          }
+
+          newRoute = json.data.routes[0];
         }
 
         setRoutes((prev) => {
@@ -316,7 +344,6 @@ export default function RouteMapScreen() {
           next[selectedIndex] = newRoute;
           return next;
         });
-        // Force camera to re-fit the updated route
         fittedVariantRef.current = -1;
       } catch (err: unknown) {
         setWaypoints(waypoints); // revert
@@ -349,17 +376,9 @@ export default function RouteMapScreen() {
 
       // Backend mode enum is uppercased; AI mode currently isn't carried in
       // genParams (only a_to_b / loop come from the map screen), but future-proof it.
-      const modeMap: Record<string, RouteMode> = {
-        a_to_b: "A_TO_B",
-        loop: "LOOP",
-        ai: "AI",
-      };
-      const mode = modeMap[genParams.mode] ?? "A_TO_B";
-
       return {
         title: title.trim(),
         description: description.trim() || undefined,
-        mode,
         transport: variant.profile,
         distance: Math.round(variant.distance_km * 1000),
         duration: Math.round(variant.duration_s),
@@ -368,10 +387,6 @@ export default function RouteMapScreen() {
         geometry: variant.geometry,
         bbox: variant.bbox,
         elevationProfile: variant.elevation_profile ?? undefined,
-        startLat: genParams.start[1],
-        startLng: genParams.start[0],
-        endLat: genParams.end?.[1],
-        endLng: genParams.end?.[0],
         pois: routePois.length > 0 ? routePois : undefined,
       };
     },
@@ -424,13 +439,20 @@ export default function RouteMapScreen() {
     }
   }, [buildSavePayload, saveTitle, saveDescription, saveRoute, tr]);
 
-  const poiGeoJSON = useMemo(
-    () =>
-      pois.length
-        ? ({ type: "FeatureCollection", features: pois } as const)
-        : null,
-    [pois],
-  );
+  const poiGeoJSON = useMemo(() => {
+    if (!pois.length) return null;
+    const features = pois.map((p) => ({
+      ...p,
+      properties: {
+        ...p.properties,
+        display_name:
+          poiDisplayName(p.properties.name, p.properties.category, tr) ??
+          p.properties.name ??
+          "",
+      },
+    }));
+    return { type: "FeatureCollection" as const, features };
+  }, [pois, tr]);
 
   useEffect(() => {
     if (Platform.OS === "android") {
@@ -539,7 +561,7 @@ export default function RouteMapScreen() {
             <SymbolLayer
               id="pois-label-layer"
               style={{
-                textField: "{name}",
+                textField: "{display_name}",
                 textFont: ["Noto Sans Regular"],
                 textSize: 11,
                 textOffset: [0, 1.6],

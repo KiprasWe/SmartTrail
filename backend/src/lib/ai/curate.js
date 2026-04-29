@@ -103,6 +103,12 @@ const CURATION_SCHEMA = {
   },
 };
 
+function positionLabel(fraction) {
+  if (fraction < 0.33) return "[ROUTE START]";
+  if (fraction < 0.67) return "[MIDROUTE]";
+  return "[ROUTE END]";
+}
+
 function buildCurationPrompt({
   pois,
   profileLabel,
@@ -115,6 +121,7 @@ function buildCurationPrompt({
   mode,
   namedPois,
   userNamedPlaceIds,
+  routePositions,
 }) {
   const langInstr = LANG_INSTRUCTIONS[lang] ?? LANG_INSTRUCTIONS.en;
   const tripDesc = hasEnd
@@ -125,6 +132,8 @@ function buildCurationPrompt({
     .map((p, i) => {
       const isNamed = userNamedPlaceIds?.has(p.place_id);
       const isGapFill = p._gapFill && !isNamed;
+      const fraction = routePositions?.get(p.place_id);
+      const posTag = fraction != null ? ` ${positionLabel(fraction)}` : "";
       const tag = isNamed
         ? " ⚑ USER-REQUESTED — MUST be essential=true"
         : isGapFill
@@ -133,10 +142,28 @@ function buildCurationPrompt({
       return (
         `[${i + 1}] place_id="${p.place_id}" | ${p.name} (${p.primary_type ?? "place"}) | ` +
         `${p.formatted_address ?? ""} | ${p.editorial_summary || p.description || ""}` +
+        posTag +
         tag
       );
     })
     .join("\n");
+
+  // Compute bucket sizes for the distribution rule
+  let distributionRule = "";
+  if (routePositions?.size) {
+    const fractions = [...routePositions.values()];
+    const startN = fractions.filter((f) => f < 0.33).length;
+    const midN = fractions.filter((f) => f >= 0.33 && f < 0.67).length;
+    const endN = fractions.filter((f) => f >= 0.67).length;
+    if (midN > 0) {
+      distributionRule = [
+        `ROUTE DISTRIBUTION: Pool has ${startN} stops near the start [ROUTE START], ` +
+          `${midN} midroute [MIDROUTE], ${endN} near the destination [ROUTE END].`,
+        `MANDATORY: Select AT LEAST 1 essential stop from [MIDROUTE] if any good ones exist there.`,
+        `Do NOT mark all essentials from [ROUTE END] only — spread them along the whole route.`,
+      ].join("\n");
+    }
+  }
 
   const { modeLabel, modeInstructions } = buildModeCurationContext(
     mode,
@@ -167,6 +194,7 @@ function buildCurationPrompt({
     `  • A 20km ride needs ~5 stops max, not 19`,
     `OPTIONAL (essential=false): Shown on map, no detour. Be generous here instead.`,
     `EXCLUDE: Car parks, petrol stations, supermarkets, hardware stores, irrelevant places.`,
+    distributionRule,
     ``,
     `For EACH included place write a guide_note: 1-2 vivid tour-guide sentences.`,
     `Return a JSON array ordered start → destination. Only use place_ids from the list above.`,
@@ -189,6 +217,7 @@ export async function tourGuideCurate({
   mode,
   namedPois,
   userNamedPlaceIds,
+  routePositions,
 }) {
   if (!genai || !pois.length) return null;
 
@@ -204,6 +233,7 @@ export async function tourGuideCurate({
     mode,
     namedPois,
     userNamedPlaceIds,
+    routePositions,
   });
 
   try {

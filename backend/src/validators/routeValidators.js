@@ -68,6 +68,21 @@ export const aiRouteSchema = z
     area: z.string().max(200).optional(),
     preferences: z.string().max(500).optional(),
     lang: z.enum(["en", "lt"]).default("en"),
+    waypoints: z.array(lngLat).optional().default([]),
+  })
+  .refine((d) => d.end || typeof d.distance === "number", {
+    message: "Either end or distance is required",
+    path: ["distance"],
+  });
+
+export const aiRerouteSchema = z
+  .object({
+    start: lngLat,
+    end: lngLat.optional(),
+    distance: z.number().min(500).max(100_000).optional(),
+    profile: profile.default("foot-walking"),
+    elevationPreference,
+    waypoints: z.array(lngLat).optional().default([]),
   })
   .refine((d) => d.end || typeof d.distance === "number", {
     message: "Either end or distance is required",
@@ -77,7 +92,6 @@ export const aiRouteSchema = z
 export const saveRouteSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
-  mode: z.enum(["A_TO_B", "LOOP", "AI"]),
   transport: z.string(),
   distance: z.number().int().positive(),
   duration: z.number().int().positive(),
@@ -90,12 +104,6 @@ export const saveRouteSchema = z.object({
   bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),
   instructions: z.array(z.any()).optional(),
   elevationProfile: z.any().optional(),
-  startLat: z.number(),
-  startLng: z.number(),
-  startLabel: z.string().optional(),
-  endLat: z.number().optional(),
-  endLng: z.number().optional(),
-  endLabel: z.string().optional(),
   aiPlan: z.any().optional(),
   pois: z.any().optional(),
   variantLabel: z.string().optional(),

@@ -8,7 +8,11 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
 import { useTranslation } from "@/hooks/use-translation";
-import { formatDist, poiIcon } from "@/lib/route-map-helpers";
+import {
+  poiIcon,
+  translatePoiCategory,
+  poiDisplayName,
+} from "@/lib/route-map-helpers";
 import type { PoiFeature } from "@/types/route";
 
 type Props = {
@@ -19,7 +23,13 @@ type Props = {
   colors: (typeof Colors)["light" | "dark"];
 };
 
-export function PoiListPanel({ pois, onSelect, onClose, bottomInset, colors: c }: Props) {
+export function PoiListPanel({
+  pois,
+  onSelect,
+  onClose,
+  bottomInset,
+  colors: c,
+}: Props) {
   const { t } = useTranslation();
 
   return (
@@ -68,18 +78,25 @@ export function PoiListPanel({ pois, onSelect, onClose, bottomInset, colors: c }
               />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.rowName, { color: c.text }]} numberOfLines={1}>
-                {poi.properties.name}
+              <Text
+                style={[styles.rowName, { color: c.text }]}
+                numberOfLines={1}
+              >
+                {poiDisplayName(
+                  poi.properties.name,
+                  poi.properties.category,
+                  t,
+                )}
               </Text>
               {poi.properties.category && (
-                <Text style={[styles.rowCategory, { color: c.muted }]} numberOfLines={1}>
-                  {poi.properties.category}
+                <Text
+                  style={[styles.rowCategory, { color: c.muted }]}
+                  numberOfLines={1}
+                >
+                  {translatePoiCategory(poi.properties.category, t)}
                 </Text>
               )}
             </View>
-            <Text style={[styles.rowDist, { color: c.muted }]}>
-              {formatDist((poi.properties.distance_from_route ?? 0) / 1000)}
-            </Text>
           </TouchableOpacity>
         ))}
       </ScrollView>

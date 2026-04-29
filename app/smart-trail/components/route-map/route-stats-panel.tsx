@@ -86,17 +86,6 @@ export function RouteStatsPanel({
             </View>
           </>
         )}
-        {poisCount > 0 && (
-          <>
-            <View style={[styles.statDivider, { backgroundColor: c.border }]} />
-            <View style={styles.stat}>
-              <Ionicons name="location-outline" size={14} color="#F59E0B" />
-              <Text style={[styles.statValue, { color: c.text }]}>
-                {poisCount}
-              </Text>
-            </View>
-          </>
-        )}
       </View>
 
       {elevations.length > 0 && (
@@ -106,43 +95,6 @@ export function RouteStatsPanel({
           width={width - 32} // 16px horizontal padding × 2
           height={80}
         />
-      )}
-
-      {routes.length > 1 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.variantScroll}
-        >
-          {routes.map((r, i) => {
-            const active = i === selectedIndex;
-            const color = ROUTE_COLORS[i % ROUTE_COLORS.length];
-            return (
-              <TouchableOpacity
-                key={i}
-                style={[
-                  styles.variantCard,
-                  {
-                    backgroundColor: active ? c.surface : c.bg,
-                    borderColor: active ? color : c.border,
-                  },
-                ]}
-                onPress={() => onSelectVariant(i)}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.variantDot, { backgroundColor: color }]} />
-                <View>
-                  <Text style={[styles.variantLabel, { color: c.text }]}>
-                    {r.label.charAt(0).toUpperCase() + r.label.slice(1)}
-                  </Text>
-                  <Text style={[styles.variantMeta, { color: c.muted }]}>
-                    {formatDist(r.distance_km)} · {formatTime(r.duration_s)}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
       )}
     </View>
   );

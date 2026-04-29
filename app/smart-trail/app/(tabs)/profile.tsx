@@ -4,6 +4,10 @@ import {
   Text,
   Image,
   TouchableOpacity,
+  TextInput,
+  Modal,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -11,6 +15,7 @@ import {
   Alert,
   useColorScheme,
 } from "react-native";
+import { modalStyles } from "@/components/route-map/modal-styles";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useProfileStore } from "@/store/use-profile-store";
@@ -49,6 +54,16 @@ const TRANSPORT_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   "cycling-electric": "bicycle-outline",
 };
 
+const TRANSPORT_LABEL_KEY: Record<string, string> = {
+  "foot-walking": "profile.transport-walking",
+  "foot-hiking": "profile.transport-hiking",
+  running: "profile.transport-running",
+  "cycling-regular": "profile.transport-cycling",
+  "cycling-road": "profile.transport-road",
+  "cycling-mountain": "profile.transport-mtb",
+  "cycling-electric": "profile.transport-ebike",
+};
+
 export default function ProfileScreen() {
   const { profile, loading, error, fetchProfile } = useProfileStore();
   const scheme = useColorScheme() ?? "light";
@@ -62,8 +77,38 @@ export default function ProfileScreen() {
   const bootstrapSavedRoutes = useSavedRoutesStore((s) => s.bootstrap);
   const refreshSavedRoutes = useSavedRoutesStore((s) => s.refresh);
   const removeRoute = useSavedRoutesStore((s) => s.remove);
+  const updateRoute = useSavedRoutesStore((s) => s.update);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [editingRoute, setEditingRoute] = useState<SavedRouteListItem | null>(
+    null,
+  );
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const handleEdit = useCallback((route: SavedRouteListItem) => {
+    setEditingRoute(route);
+    setEditTitle(route.title);
+    setEditDescription(route.description ?? "");
+  }, []);
+
+  const handleEditSave = useCallback(async () => {
+    if (!editingRoute || !editTitle.trim()) return;
+    setEditSaving(true);
+    try {
+      await updateRoute(editingRoute.id, {
+        title: editTitle.trim(),
+        description: editDescription.trim() || undefined,
+      });
+      setEditingRoute(null);
+    } catch {
+      Alert.alert(t("common.error"), t("profile.edit-route-save-error"));
+    } finally {
+      setEditSaving(false);
+    }
+  }, [editingRoute, editTitle, editDescription, updateRoute, t]);
 
   const handleDelete = useCallback(
     (id: string, title: string) => {
@@ -169,6 +214,106 @@ export default function ProfileScreen() {
         }
       />
 
+      <Modal
+        visible={!!editingRoute}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!editSaving) setEditingRoute(null);
+        }}
+      >
+        <KeyboardAvoidingView
+          style={modalStyles.backdrop}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => {
+              if (!editSaving) setEditingRoute(null);
+            }}
+          />
+          <View
+            style={[
+              modalStyles.card,
+              { backgroundColor: ts.bg, borderColor: ts.border },
+            ]}
+          >
+            <Text style={[modalStyles.title, { color: ts.text }]}>
+              {t("profile.edit-route-title")}
+            </Text>
+
+            <Text style={[modalStyles.label, { color: ts.muted }]}>
+              {t("route-map.save-modal-title-label")}
+            </Text>
+            <TextInput
+              value={editTitle}
+              onChangeText={setEditTitle}
+              placeholder={t("route-map.save-modal-title-placeholder")}
+              placeholderTextColor={ts.muted}
+              maxLength={100}
+              style={[
+                modalStyles.input,
+                {
+                  color: ts.text,
+                  backgroundColor: ts.surface,
+                  borderColor: ts.border,
+                },
+              ]}
+            />
+
+            <Text style={[modalStyles.label, { color: ts.muted }]}>
+              {t("route-map.save-modal-description-label")}
+            </Text>
+            <TextInput
+              value={editDescription}
+              onChangeText={setEditDescription}
+              placeholder={t("route-map.save-modal-description-placeholder")}
+              placeholderTextColor={ts.muted}
+              maxLength={500}
+              multiline
+              style={[
+                modalStyles.input,
+                modalStyles.inputMultiline,
+                {
+                  color: ts.text,
+                  backgroundColor: ts.surface,
+                  borderColor: ts.border,
+                },
+              ]}
+            />
+
+            <View style={modalStyles.actions}>
+              <TouchableOpacity
+                style={[modalStyles.btn, { borderColor: ts.border }]}
+                onPress={() => setEditingRoute(null)}
+                disabled={editSaving}
+              >
+                <Text style={{ color: ts.text, fontWeight: "600" }}>
+                  {t("common.cancel")}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  modalStyles.btn,
+                  { backgroundColor: ts.tint, borderColor: ts.tint },
+                ]}
+                onPress={handleEditSave}
+                disabled={editSaving || !editTitle.trim()}
+              >
+                {editSaving ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>
+                    {t("common.save")}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       <ScrollView
         style={styles.scrollFlex}
         showsVerticalScrollIndicator={false}
@@ -223,6 +368,9 @@ export default function ProfileScreen() {
             <View style={{ gap: 10 }}>
               {savedRoutes.map((r: SavedRouteListItem) => {
                 const icon = TRANSPORT_ICON[r.transport] ?? "map-outline";
+                const transportLabel = t(
+                  TRANSPORT_LABEL_KEY[r.transport] ?? "",
+                );
                 const isDeleting = deletingId === r.id;
                 return (
                   <View
@@ -263,6 +411,8 @@ export default function ProfileScreen() {
                             style={[styles.savedCardMeta, { color: ts.muted }]}
                             numberOfLines={1}
                           >
+                            {transportLabel}
+                            {" · "}
                             {formatDistance(r.distance)} ·{" "}
                             {formatDuration(r.duration)}
                             {r.ascent != null ? ` · ↑${r.ascent} m` : ""}
@@ -275,10 +425,27 @@ export default function ProfileScreen() {
                     </TouchableOpacity>
 
                     <TouchableOpacity
+                      onPress={() => handleEdit(r)}
+                      hitSlop={8}
+                      style={styles.cardActionBtn}
+                    >
+                      <Ionicons
+                        name="pencil-outline"
+                        size={18}
+                        color={ts.muted}
+                      />
+                    </TouchableOpacity>
+                    <View
+                      style={[
+                        styles.cardDivider,
+                        { backgroundColor: ts.border },
+                      ]}
+                    />
+                    <TouchableOpacity
                       onPress={() => handleDelete(r.id, r.title)}
                       disabled={isDeleting}
                       hitSlop={8}
-                      style={styles.deleteBtn}
+                      style={styles.cardActionBtn}
                     >
                       {isDeleting ? (
                         <ActivityIndicator size="small" color={ts.muted} />
@@ -368,11 +535,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
   },
-  deleteBtn: {
-    paddingHorizontal: 14,
+  cardActionBtn: {
+    paddingHorizontal: 12,
     paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
+  },
+  cardDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 20,
   },
   savedCardTitle: { fontSize: 14, fontWeight: "700", letterSpacing: -0.1 },
   savedCardMeta: { fontSize: 12, flexShrink: 1 },

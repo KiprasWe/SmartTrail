@@ -119,22 +119,14 @@ export function buildORSElevationOpts(elevPref, orsProfile = "") {
   const isFoot = orsProfile.startsWith("foot");
 
   if (elevPref === "flat") {
-    if (isCycling) return { profileParams: { weightings: { steepness_difficulty: 0 } } };
-    // foot: low green bias keeps routing on paved/urban paths (generally flatter)
-    if (isFoot) return { profileParams: { weightings: { green: 0.0, quiet: 0.3 } } };
+    if (isCycling) return { profileParams: { weightings: { steepness_difficulty: 3 } } };
+    if (isFoot) return {};
     return {};
   }
 
   if (elevPref === "hilly") {
-    if (isCycling) return { profileParams: { weightings: { steepness_difficulty: 3 } } };
-    // foot: high green bias steers toward parks/trails which tend to have more elevation
-    if (isFoot) return { profileParams: { weightings: { green: 1.0 } } };
-    return {};
-  }
-
-  if (elevPref === "optimal") {
-    if (isCycling) return { profileParams: { weightings: { steepness_difficulty: 1 } } };
-    if (isFoot) return { profileParams: { weightings: { green: 0.5 } } };
+    if (isCycling) return { profileParams: { weightings: { steepness_difficulty: 0 } } };
+    if (isFoot) return {};
     return {};
   }
 

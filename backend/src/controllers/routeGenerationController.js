@@ -174,7 +174,7 @@ export const directRouting = asyncHandler(async (req, res) => {
     profileConfig.orsProfile,
   );
   const needsElevPick =
-    elevationPreference === "flat" || elevationPreference === "hilly";
+    elevationPreference === "flat" || elevationPreference === "hilly" || elevationPreference === "optimal";
 
   let pickedData;
   try {
@@ -195,15 +195,16 @@ export const directRouting = asyncHandler(async (req, res) => {
       if (!features.length) throw new Error("ORS returned no route");
 
       const candidates = features.map((f) => orsFeatureToRouteData(f));
-      pickedData = candidates.reduce((best, c) =>
-        elevationPreference === "flat"
-          ? c.ascent_m < best.ascent_m
-            ? c
-            : best
-          : c.ascent_m > best.ascent_m
-            ? c
-            : best,
-      );
+      if (elevationPreference === "optimal") {
+        const sorted = [...candidates].sort((a, b) => a.ascent_m - b.ascent_m);
+        pickedData = sorted[Math.floor(sorted.length / 2)];
+      } else {
+        pickedData = candidates.reduce((best, c) =>
+          elevationPreference === "flat"
+            ? c.ascent_m < best.ascent_m ? c : best
+            : c.ascent_m > best.ascent_m ? c : best,
+        );
+      }
 
       console.log(
         `[directRouting] picked ${elevationPreference} from ${candidates.length} alternatives — ` +
@@ -311,10 +312,10 @@ export const loopRouting = asyncHandler(async (req, res) => {
     : 0;
   const stopForcesExtension = farthestStopM > distance * 1.5;
 
-  // For flat/hilly preference with pure or stops-only loops, generate multiple
+  // For flat/hilly/optimal preference with pure or stops-only loops, generate multiple
   // candidates with different random shapes and pick the best by ascent.
   // controlPoints are user-drawn so we don't re-randomise those.
-  const needsElevPick = elevationPreference === "flat" || elevationPreference === "hilly";
+  const needsElevPick = elevationPreference === "flat" || elevationPreference === "hilly" || elevationPreference === "optimal";
   const loopAttempts = needsElevPick && !controlPoints?.length ? 3 : 1;
 
   let result;
@@ -339,11 +340,16 @@ export const loopRouting = asyncHandler(async (req, res) => {
         .map((r) => r.value);
       if (!valid.length) throw new Error("All loop generation attempts failed");
 
-      result = valid.reduce((best, r) =>
-        elevationPreference === "flat"
-          ? r.routeData.ascent_m < best.routeData.ascent_m ? r : best
-          : r.routeData.ascent_m > best.routeData.ascent_m ? r : best,
-      );
+      if (elevationPreference === "optimal") {
+        const sorted = [...valid].sort((a, b) => a.routeData.ascent_m - b.routeData.ascent_m);
+        result = sorted[Math.floor(sorted.length / 2)];
+      } else {
+        result = valid.reduce((best, r) =>
+          elevationPreference === "flat"
+            ? r.routeData.ascent_m < best.routeData.ascent_m ? r : best
+            : r.routeData.ascent_m > best.routeData.ascent_m ? r : best,
+        );
+      }
 
       console.log(
         `[loopRouting] elevation pick (${elevationPreference}): ` +
@@ -498,6 +504,71 @@ function poiQualityScore(poi) {
   if (cat.includes("cafe") || cat.includes("restaurant")) bonus += 3;
   return rating * 5 + Math.min(reviews / 100, 5) + bonus;
 }
+
+export const aiReroute = asyncHandler(async (req, res) => {
+  const { start, end, distance, profile, elevationPreference, waypoints } = req.body;
+
+  const profileConfig = PROFILE_CONFIGS[profile];
+  if (!profileConfig)
+    return sendError(res, { ...Errors.BAD_REQUEST, message: `Invalid profile: ${profile}` });
+
+  const orsProfile = profileConfig.orsProfile;
+  const orsElevOpts = buildORSElevationOpts(elevationPreference, orsProfile);
+  const hasEnd = Array.isArray(end) && end.length === 2;
+
+  try {
+    let routeData;
+    if (hasEnd) {
+      const locs = [start, ...waypoints, end];
+      const radiuses =
+        waypoints.length > 0
+          ? [-1, ...waypoints.map(() => 1500), -1]
+          : undefined;
+      const orsResult = await fetchORSDirections(
+        orsProfile,
+        locs,
+        radiuses ? { ...orsElevOpts, radiuses } : orsElevOpts,
+      );
+      const feat = orsResult.features?.[0];
+      if (!feat) throw new Error("ORS returned no route");
+      routeData = orsFeatureToRouteData(feat);
+    } else {
+      const loopResult = await generateLoop({
+        start,
+        targetM: distance,
+        orsProfile,
+        orsElevOpts,
+        stops: waypoints,
+      });
+      routeData = loopResult.routeData;
+    }
+
+    const sf = profileConfig.speedFactor ?? 1;
+    return sendSuccess(res, Success.ROUTE_GENERATED, {
+      routes: [
+        {
+          label: "recommended",
+          description: "AI Tour Guide route",
+          profile: profileConfig.label,
+          distance_km: routeData.distance_km,
+          duration_s: Math.round(routeData.duration_s * sf),
+          ascent_m: routeData.ascent_m,
+          descent_m: routeData.descent_m,
+          geometry: { type: "LineString", coordinates: routeData.coords },
+          bbox: routeBbox(routeData.coords),
+          elevation_profile: routeData.elevArr,
+          maneuvers: routeData.maneuvers,
+          pois: [],
+        },
+      ],
+    });
+  } catch (err) {
+    return sendError(res, {
+      ...Errors.EXTERNAL_SERVICE_ERROR,
+      message: `AI reroute failed: ${err.message}`,
+    });
+  }
+});
 
 export const loopPoiSuggestions = asyncHandler(async (req, res) => {
   const { routeCoords, poiTypes, max } = req.body;

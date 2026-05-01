@@ -244,7 +244,7 @@ export const directRouting = asyncHandler(async (req, res) => {
   const route = {
     label: "recommended",
     description: "Recommended route",
-    profile: profileConfig.label,
+    profile,
     distance_km,
     duration_s,
     ascent_m,
@@ -264,11 +264,11 @@ export const directRouting = asyncHandler(async (req, res) => {
   });
 });
 
-function buildLoopRoute(routeData, pois, profileLabel, overlapRatio) {
+function buildLoopRoute(routeData, pois, profileKey, overlapRatio) {
   return {
     label: "loop",
     description: "Loop route",
-    profile: profileLabel,
+    profile: profileKey,
     distance_km: routeData.distance_km,
     duration_s: routeData.duration_s,
     ascent_m: routeData.ascent_m,
@@ -330,21 +330,32 @@ export const loopRouting = asyncHandler(async (req, res) => {
         controlPoints,
       });
     } else {
-      const settled = await Promise.allSettled(
-        Array.from({ length: loopAttempts }, () =>
-          generateLoop({ start, targetM: distance, orsProfile, orsElevOpts, stops: waypoints }),
-        ),
-      );
-      const valid = settled
-        .filter((r) => r.status === "fulfilled")
-        .map((r) => r.value);
-      if (!valid.length) throw new Error("All loop generation attempts failed");
+      const LOOP_DISTANCE_TOLERANCE = 0.12;
+      const candidates = [];
+      for (let i = 0; i < loopAttempts; i++) {
+        try {
+          const r = await generateLoop({
+            start,
+            targetM: distance,
+            orsProfile,
+            orsElevOpts,
+            stops: waypoints,
+          });
+          candidates.push(r);
+          const offRatio =
+            Math.abs(r.routeData.distance_km * 1000 - distance) / distance;
+          if (offRatio <= LOOP_DISTANCE_TOLERANCE) break;
+        } catch (err) {
+          console.warn(`[loopRouting] attempt ${i + 1} failed: ${err.message}`);
+        }
+      }
+      if (!candidates.length) throw new Error("All loop generation attempts failed");
 
       if (elevationPreference === "optimal") {
-        const sorted = [...valid].sort((a, b) => a.routeData.ascent_m - b.routeData.ascent_m);
+        const sorted = [...candidates].sort((a, b) => a.routeData.ascent_m - b.routeData.ascent_m);
         result = sorted[Math.floor(sorted.length / 2)];
       } else {
-        result = valid.reduce((best, r) =>
+        result = candidates.reduce((best, r) =>
           elevationPreference === "flat"
             ? r.routeData.ascent_m < best.routeData.ascent_m ? r : best
             : r.routeData.ascent_m > best.routeData.ascent_m ? r : best,
@@ -353,7 +364,7 @@ export const loopRouting = asyncHandler(async (req, res) => {
 
       console.log(
         `[loopRouting] elevation pick (${elevationPreference}): ` +
-          valid.map((r) => `${r.routeData.ascent_m}m`).join(" / ") +
+          candidates.map((r) => `${r.routeData.ascent_m}m`).join(" / ") +
           ` → chose ${result.routeData.ascent_m}m`,
       );
     }
@@ -394,7 +405,7 @@ export const loopRouting = asyncHandler(async (req, res) => {
       buildLoopRoute(
         loopRouteData,
         pois,
-        profileConfig.label,
+        profile,
         result.meta.overlap_ratio,
       ),
     ],
@@ -549,7 +560,7 @@ export const aiReroute = asyncHandler(async (req, res) => {
         {
           label: "recommended",
           description: "AI Tour Guide route",
-          profile: profileConfig.label,
+          profile,
           distance_km: routeData.distance_km,
           duration_s: Math.round(routeData.duration_s * sf),
           ascent_m: routeData.ascent_m,

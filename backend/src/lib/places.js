@@ -475,17 +475,34 @@ function sampleSkeleton(coords, stepM) {
 // Samples the skeleton every stepM metres and fires a single multi-center
 // Overpass query — bypasses the ORS POI API's hard 2km buffer cap and covers
 // the full corridor rather than just 2-3 zone anchor points.
+//
+// osmTagOverride: optional array of {key, value} objects. When provided and
+// non-empty, replaces the TYPE_TO_OSM_TAGS lookup with precise OSM tags
+// supplied by the AI intent decomposition.
+
+function osmTagsToTagGroups(osmTags) {
+  const map = new Map();
+  for (const { key, value } of osmTags) {
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(value);
+  }
+  return [...map.entries()];
+}
+
 export async function searchCorridorByType(
   skeletonCoords,
   places_type,
   radiusM = 3_000,
   count = 20,
   stepM = 5_000,
+  osmTagOverride = null,
 ) {
   if (!skeletonCoords?.length) return [];
 
   const tagGroups =
-    TYPE_TO_OSM_TAGS[places_type] ?? TYPE_TO_OSM_TAGS.tourist_attraction;
+    osmTagOverride?.length
+      ? osmTagsToTagGroups(osmTagOverride)
+      : (TYPE_TO_OSM_TAGS[places_type] ?? TYPE_TO_OSM_TAGS.tourist_attraction);
   const samples = sampleSkeleton(skeletonCoords, stepM);
 
   const lines = [];
@@ -516,6 +533,49 @@ export async function searchCorridorByType(
     return deduped.slice(0, count);
   } catch (err) {
     console.warn(`[places] Corridor search failed: ${err.message}`);
+    return [];
+  }
+}
+
+// Overpass area search by explicit OSM tag pairs.
+// Used to discover POIs in spatially-constrained areas (e.g. "west part of the city")
+// using precise OSM tags from the AI intent (e.g. military=bunker).
+export async function searchAreaByOsmTags(center, radiusM, osmTagSets, limit = 40) {
+  if (!center || !osmTagSets?.length) return [];
+
+  const [lng, lat] = center;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+
+  const lines = [];
+  for (const { key, value } of osmTagSets) {
+    const safeKey = String(key).replace(/[^a-z_:-]/gi, "").slice(0, 40);
+    const safeVal = String(value).replace(/["\\]/g, "").slice(0, 40);
+    if (!safeKey || !safeVal) continue;
+    lines.push(`nwr["${safeKey}"="${safeVal}"](around:${Math.round(radiusM)},${lat.toFixed(6)},${lng.toFixed(6)});`);
+  }
+
+  if (!lines.length) return [];
+
+  const query = `[out:json][timeout:25];\n(\n  ${lines.join("\n  ")}\n);\nout center tags;`;
+
+  try {
+    const elements = await overpassQuery(query);
+    const pois = elements.map(overpassElementToPoi).filter(Boolean);
+
+    const seen = new Set();
+    const deduped = pois.filter((p) => {
+      if (seen.has(p.place_id)) return false;
+      seen.add(p.place_id);
+      return true;
+    });
+
+    console.log(
+      `[places] searchAreaByOsmTags (r=${(radiusM / 1000).toFixed(1)}km, ${osmTagSets.length} tag pairs): ${deduped.length} results`,
+    );
+
+    return deduped.slice(0, limit);
+  } catch (err) {
+    console.warn(`[places] searchAreaByOsmTags failed: ${err.message}`);
     return [];
   }
 }

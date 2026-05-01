@@ -29,6 +29,19 @@ import {
   TabScreenHeader,
   mainTabHeaderIconHitStyle,
 } from "@/components/ui/tab-screen-header";
+import { TRANSPORT_OPTIONS } from "@/components/generate/route-form-components";
+
+// Routes saved before the backend fix stored the human-readable label instead
+// of the profile key. This maps those old values back to keys so they still
+// resolve to a translated label.
+const LEGACY_LABEL_TO_KEY: Record<string, string> = {
+  Walking: "foot-walking",
+  Hiking: "foot-hiking",
+  Running: "running",
+  Cycling: "cycling-regular",
+  "Road Cycling": "cycling-road",
+  "Mountain Biking": "cycling-mountain",
+};
 
 const AVATAR_PLACEHOLDER = (name: string) =>
   `https://ui-avatars.com/api/?background=16A34A&color=fff&size=256&bold=true&name=${encodeURIComponent(name)}`;
@@ -42,26 +55,6 @@ const formatDuration = (seconds: number) => {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m} min`;
-};
-
-const TRANSPORT_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
-  "foot-walking": "walk-outline",
-  "foot-hiking": "trail-sign-outline",
-  running: "walk-outline",
-  "cycling-regular": "bicycle-outline",
-  "cycling-road": "bicycle-outline",
-  "cycling-mountain": "bicycle-outline",
-  "cycling-electric": "bicycle-outline",
-};
-
-const TRANSPORT_LABEL_KEY: Record<string, string> = {
-  "foot-walking": "profile.transport-walking",
-  "foot-hiking": "profile.transport-hiking",
-  running: "profile.transport-running",
-  "cycling-regular": "profile.transport-cycling",
-  "cycling-road": "profile.transport-road",
-  "cycling-mountain": "profile.transport-mtb",
-  "cycling-electric": "profile.transport-ebike",
 };
 
 export default function ProfileScreen() {
@@ -367,10 +360,15 @@ export default function ProfileScreen() {
           ) : (
             <View style={{ gap: 10 }}>
               {savedRoutes.map((r: SavedRouteListItem) => {
-                const icon = TRANSPORT_ICON[r.transport] ?? "map-outline";
-                const transportLabel = t(
-                  TRANSPORT_LABEL_KEY[r.transport] ?? "",
+                const transportKey =
+                  LEGACY_LABEL_TO_KEY[r.transport] ?? r.transport;
+                const transportOption = TRANSPORT_OPTIONS.find(
+                  (o) => o.key === transportKey,
                 );
+                const icon = transportOption?.icon ?? "map-outline";
+                const transportLabel = transportOption
+                  ? t(transportOption.tKey)
+                  : (r.transport ?? "");
                 const isDeleting = deletingId === r.id;
                 return (
                   <View

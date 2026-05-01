@@ -18,6 +18,7 @@ import {
   reverseGeocodePlaceName,
   discoverAllPois,
   geocodeCity,
+  searchAreaByOsmTags,
 } from "../places.js";
 import { fetchORSDirections, orsFeatureToRouteData, buildORSElevationOpts } from "../ors.js";
 import { PROFILE_CONFIGS } from "../profiles.js";
@@ -38,6 +39,7 @@ import {
   getEffectiveTripDistance,
   decomposeIntent,
 } from "./classify.js";
+import { extractSpatialAreas } from "./spatial.js";
 import { searchIntentsByZone } from "./search.js";
 import { tourGuideCurate } from "./curate.js";
 import {
@@ -207,15 +209,19 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
   // conditionally run discovery.
   onStage("ai_pois");
 
-  const [placeStart, placeEnd] = await Promise.all([
+  const [placeStart, placeEnd, rawSpatialAreas] = await Promise.all([
     reverseGeocodePlaceName(start, lang).catch(() => null),
     hasEnd
       ? reverseGeocodePlaceName(end, lang).catch(() => null)
       : Promise.resolve(null),
+    extractSpatialAreas(preferences, start, null, distanceKm, lang).catch(() => []),
   ]);
 
   if (placeStart) console.log(`[aiRouting] start → "${placeStart}"`);
   if (placeEnd) console.log(`[aiRouting] end   → "${placeEnd}"`);
+  if (rawSpatialAreas.length) {
+    console.log(`[aiRouting] Spatial areas: ${rawSpatialAreas.map(a => `"${a.label}"`).join(", ")}`);
+  }
 
   // Quick pre-check: does this request mention any named places?
   // We pass an empty pool — Gemini just classifies the text, no matching needed.
@@ -323,6 +329,28 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       ? await searchIntentsByZone(effectiveIntents, zones, placesCtx, skeletonCoords)
       : [];
 
+  // ── Search spatial areas using intent OSM tags ────────────────────────────
+  // Finds POIs in user-specified spatial constraints (e.g. "west part", "old town")
+  // using precise OSM tags from the decomposed intents.
+  const spatialAreaPois = rawSpatialAreas.length && effectiveIntents.length
+    ? (await Promise.all(
+        rawSpatialAreas.map(area =>
+          Promise.all(
+            effectiveIntents
+              .filter(i => i.osm_tags?.length)
+              .map(i => searchAreaByOsmTags(area.center, area.radiusM, i.osm_tags, 20).catch(() => []))
+          ).then(results => results.flat())
+        )
+      )).flat()
+    : [];
+
+  if (spatialAreaPois.length) {
+    console.log(`[aiRouting] Spatial area discovery: ${spatialAreaPois.length} POIs from ${rawSpatialAreas.length} area(s)`);
+  }
+
+  // Tag them so corridor filter skips them
+  const taggedSpatialPois = spatialAreaPois.map(p => ({ ...p, _fromSpatialArea: true }));
+
   // ── Geocode force_via_city intents ────────────────────────────────────────
   // When Gemini marks a city as force_via_city, we geocode it and inject it
   // as a mandatory ORS routing waypoint so the route physically goes through
@@ -417,10 +445,12 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
         : rawPool;
 
     // Re-merge specific-area POIs after reachability (they bypass the barrier check
-    // because they may genuinely be off-corridor by design)
-    enrichedPool = dedupPois([...specificAreaPois, ...reachabilityPool]);
+    // because they may genuinely be off-corridor by design).
+    // Also merge spatial area POIs — they bypass corridor filter by design.
+    const allSpecificPois = dedupPois([...specificAreaPois, ...taggedSpatialPois]);
+    enrichedPool = dedupPois([...allSpecificPois, ...reachabilityPool]);
     console.log(
-      `[aiRouting] Category pool: ${categoryPois.length} ORS (${specificAreaPois.length} specific-area) + ` +
+      `[aiRouting] Category pool: ${categoryPois.length} ORS (${specificAreaPois.length} specific-area, ${taggedSpatialPois.length} spatial) + ` +
         `${filteredDiscovered.length} Overpass → ${reachabilityPool.length} after reachability ` +
         `→ ${enrichedPool.length} total`,
     );
@@ -432,7 +462,9 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       ? polylineCorridorFilter(categoryPois, corridorCoords)
       : categoryPois;
 
-    const mixedPool = dedupPois([...namedPois, ...filteredCategoryPois]);
+    // Spatial area POIs bypass the corridor filter (they were explicitly requested
+    // outside the skeleton corridor).
+    const mixedPool = dedupPois([...namedPois, ...filteredCategoryPois, ...taggedSpatialPois]);
 
     const namedIds = new Set(namedPois.map((p) => p.place_id));
     const reachabilityChecked = await filterReachablePois(
@@ -449,7 +481,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
 
     enrichedPool = dedupPois([...namedPois, ...reachabilityChecked]);
     console.log(
-      `[aiRouting] Mixed pool: ${namedPois.length} anchors + ${reachabilityChecked.length} category (from ${categoryPois.length})`,
+      `[aiRouting] Mixed pool: ${namedPois.length} anchors + ${reachabilityChecked.length} category (from ${categoryPois.length}, ${taggedSpatialPois.length} spatial)`,
     );
   }
 
@@ -666,7 +698,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
         {
           label: "recommended",
           description: "AI Tour Guide route",
-          profile: profileLabel,
+          profile,
           distance_km: routeData.distance_km,
           duration_s: routeData.duration_s,
           ascent_m: routeData.ascent_m,
@@ -715,7 +747,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       {
         label: "loop",
         description: "AI Tour Guide loop",
-        profile: profileLabel,
+        profile,
         distance_km: loopData.distance_km,
         duration_s: loopData.duration_s,
         ascent_m: loopData.ascent_m,

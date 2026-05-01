@@ -2,7 +2,7 @@
   "expo": {
     "name": "smart-trail",
     "slug": "smart-trail",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "smarttrail",
@@ -23,6 +23,7 @@
     "android": {
       "package": "com.webbo.smarttrail",
       "launchMode": "singleTask",
+      "versionCode": 2,
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyBSqH1Fe7114UT34VJ1ikw6fYcHX1R5wwU"
@@ -36,10 +37,10 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "WRITE_EXTERNAL_STORAGE",
-        "READ_EXTERNAL_STORAGE"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE"
       ]
     },
     "web": {

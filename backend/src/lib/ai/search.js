@@ -9,7 +9,7 @@
 // geocoded via Nominatim and used as the search center instead of the nearest
 // zone — so the search actually lands in Kaunas.
 
-import { searchPlacesForAllIntents, geocodeCity, searchCorridorByType } from "../places.js";
+import { searchPlacesForAllIntents, geocodeCity, searchCorridorByType, searchAreaByOsmTags } from "../places.js";
 import { dedupPois } from "./shared.js";
 
 export async function searchIntentsByZone(intents, zones, placesCtx, skeletonCoords = null) {
@@ -60,6 +60,8 @@ export async function searchIntentsByZone(intents, zones, placesCtx, skeletonCoo
         intent.places_type,
         3_000,
         intent.count ?? 20,
+        5_000,
+        intent.osm_tags?.length ? intent.osm_tags : null,
       ).catch(() => []);
 
       for (const poi of pois) {

@@ -2,9 +2,9 @@ import { fetchWithRetry, fetchWithTimeout } from "../utils/http.js";
 import { thinCoords, METRES_PER_DEG_LAT } from "./geo.js";
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
-export const ORS_POIS_URL = "https://api.openrouteservice.org/pois";
+export const ORS_POIS_URL = "https://api.heigit.org/openrouteservice/v0/pois";
 export const ORS_DIRECTIONS_URL =
-  "https://api.openrouteservice.org/v2/directions";
+  "https://api.heigit.org/openrouteservice/v2/directions";
 
 const TIMEOUT_ROUTING_MS = 30_000;
 
@@ -119,13 +119,15 @@ export function buildORSElevationOpts(elevPref, orsProfile = "") {
   const isFoot = orsProfile.startsWith("foot");
 
   if (elevPref === "flat") {
-    if (isCycling) return { profileParams: { weightings: { steepness_difficulty: 3 } } };
+    if (isCycling)
+      return { profileParams: { weightings: { steepness_difficulty: 3 } } };
     if (isFoot) return {};
     return {};
   }
 
   if (elevPref === "hilly") {
-    if (isCycling) return { profileParams: { weightings: { steepness_difficulty: 0 } } };
+    if (isCycling)
+      return { profileParams: { weightings: { steepness_difficulty: 0 } } };
     if (isFoot) return {};
     return {};
   }

@@ -49,7 +49,7 @@ const globalLimiter = rateLimit({
 const authLimiter = rateLimit({ windowMs: 60_000, max: 10 });
 const generateLimiter = rateLimit({
   windowMs: 60_000,
-  max: 10,
+  max: 25,
   keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
 });
 

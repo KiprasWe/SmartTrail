@@ -54,7 +54,9 @@ import { ExportGpxDialog } from "@/components/route-map/export-gpx-dialog";
 
 setAccessToken(null);
 
-const OSM_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+const MAP_STYLE_LIGHT = "https://tiles.openfreemap.org/styles/liberty";
+const MAP_STYLE_DARK =
+  "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
 export default function RouteMapScreen() {
   const scheme = useColorScheme() ?? "light";
@@ -379,7 +381,7 @@ export default function RouteMapScreen() {
       return {
         title: title.trim(),
         description: description.trim() || undefined,
-        transport: variant.profile,
+        transport: genParams.profile,
         distance: Math.round(variant.distance_km * 1000),
         duration: Math.round(variant.duration_s),
         ascent: Math.round(variant.ascent_m),
@@ -503,7 +505,7 @@ export default function RouteMapScreen() {
       {/* ── Map ── */}
       <MapView
         style={styles.map}
-        mapStyle={OSM_STYLE}
+        mapStyle={isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
         logoEnabled={false}
         attributionEnabled={false}
         compassEnabled={false}
@@ -566,8 +568,8 @@ export default function RouteMapScreen() {
                 textSize: 11,
                 textOffset: [0, 1.6],
                 textAnchor: "top",
-                textColor: "#1a1a1a",
-                textHaloColor: "#ffffff",
+                textColor: isDark ? "#f0f0f0" : "#1a1a1a",
+                textHaloColor: isDark ? "#1a1a1a" : "#ffffff",
                 textHaloWidth: 2,
                 textOptional: true,
               }}

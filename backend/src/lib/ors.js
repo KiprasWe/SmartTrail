@@ -2,7 +2,7 @@ import { fetchWithRetry, fetchWithTimeout } from "../utils/http.js";
 import { thinCoords, METRES_PER_DEG_LAT } from "./geo.js";
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
-export const ORS_POIS_URL = "https://api.heigit.org/openrouteservice/v0/pois";
+export const ORS_POIS_URL = "https://api.heigit.org/openpoiservice/v0/pois";
 export const ORS_DIRECTIONS_URL =
   "https://api.heigit.org/openrouteservice/v2/directions";
 
@@ -69,7 +69,14 @@ export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`ORS error (${res.status}): ${text}`);
+    const bodyExcerpt = text.length > 500 ? text.slice(0, 500) + "…" : text;
+    console.error(
+      `[ORS directions] FAIL status=${res.status} url=${url} ` +
+        `coords=${coordinates.length} ` +
+        `bodyKeys=${Object.keys(body).join(",")} ` +
+        `response=${bodyExcerpt}`,
+    );
+    throw new Error(`ORS ${res.status} on ${orsProfile}: ${bodyExcerpt}`);
   }
   return res.json();
 }

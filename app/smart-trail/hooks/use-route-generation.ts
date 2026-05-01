@@ -214,7 +214,21 @@ export function useRouteGeneration() {
           },
         });
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : t("generate.error");
+        const axiosErr = err as {
+          response?: { status?: number; data?: { message?: string; code?: string; error?: string } };
+          message?: string;
+        };
+        const respData = axiosErr?.response?.data;
+        const status = axiosErr?.response?.status;
+        const serverMsg = respData?.message ?? respData?.error ?? respData?.code;
+        const msg = serverMsg
+          ? `${serverMsg}${status ? ` (HTTP ${status})` : ""}`
+          : axiosErr?.message ?? t("generate.error");
+        console.error("[generate] failed:", {
+          status,
+          data: respData,
+          message: axiosErr?.message,
+        });
         Alert.alert(t("generate.error"), msg);
       } finally {
         setGenerating(false);

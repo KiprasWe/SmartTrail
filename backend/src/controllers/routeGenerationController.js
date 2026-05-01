@@ -369,6 +369,12 @@ export const loopRouting = asyncHandler(async (req, res) => {
       );
     }
   } catch (err) {
+    console.error(
+      `[loopRouting] FAIL profile=${profile} target_km=${(distance / 1000).toFixed(2)} ` +
+        `stops=${waypoints.length} controlPoints=${controlPoints?.length ?? 0} ` +
+        `start=[${start.join(",")}] elev=${elevationPreference}\n` +
+        (err.stack ?? err.message),
+    );
     return sendError(res, {
       ...Errors.EXTERNAL_SERVICE_ERROR,
       message: `Loop generation failed: ${err.message}`,

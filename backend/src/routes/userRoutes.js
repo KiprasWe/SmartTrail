@@ -13,25 +13,23 @@ import {
   setPasswordSchema,
   changePasswordSchema,
 } from "../validators/userValidators.js";
-export default function userRoutes(sensitiveOpsLimiter) {
+
+export default function userRoutes() {
   const router = express.Router();
 
   router.use(authMiddleware);
 
   router.get("/me", getUserProfile);
   router.patch("/me", validate(editUserProfileSchema), editUserProfile);
-  router.post(
-    "/me/set-password",
-    sensitiveOpsLimiter,
-    validate(setPasswordSchema),
-    setPassword,
-  );
+
+  router.post("/me/set-password", validate(setPasswordSchema), setPassword);
+
   router.post(
     "/me/change-password",
-    sensitiveOpsLimiter,
     validate(changePasswordSchema),
     changePassword,
   );
+
   router.post("/me/complete-onboarding", completeOnboarding);
 
   return router;

@@ -7,12 +7,11 @@ import {
   StyleSheet,
   Animated,
   ActivityIndicator,
-  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
-import { poiIcon, placePhotoUrl, openExternal, translatePoiCategory, poiDisplayName } from "@/lib/route-map-helpers";
+import { t } from "@/lib/i18n";
+import { poiIcon, openExternal, translatePoiCategory, poiDisplayName } from "@/lib/route-map-helpers";
 import type { PoiFeature, GenParams } from "@/types/route";
 
 type Props = {
@@ -36,7 +35,6 @@ export function PoiDetailPanel({
   bottomInset,
   colors: c,
 }: Props) {
-  const { t } = useTranslation();
   const anim = useRef(new Animated.Value(200)).current;
 
   useEffect(() => {
@@ -70,7 +68,6 @@ export function PoiDetailPanel({
           isRegenerating={isRegenerating}
           onClose={onClose}
           colors={c}
-          t={t}
         />
       )}
     </Animated.View>
@@ -85,7 +82,6 @@ type BodyProps = {
   isRegenerating: boolean;
   onClose: () => void;
   colors: (typeof Colors)["light" | "dark"];
-  t: (key: string, opts?: Record<string, string>) => string;
 };
 
 function PoiBody({
@@ -96,12 +92,9 @@ function PoiBody({
   isRegenerating,
   onClose,
   colors: c,
-  t,
 }: BodyProps) {
   const props = poi.properties;
-  const isAi = !!props.place_id || genParams?.mode === "ai";
   const description = props.editorial_summary ?? props.ai_description ?? null;
-  const photoUri = props.photo_name ? placePhotoUrl(props.photo_name) : null;
   const isWp = isWaypoint(poi);
 
   return (
@@ -109,26 +102,15 @@ function PoiBody({
       showsVerticalScrollIndicator={false}
       contentContainerStyle={{ paddingBottom: 4 }}
     >
-      {photoUri && (
-        <View style={styles.photoWrap}>
-          <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="cover" />
-          <TouchableOpacity onPress={onClose} hitSlop={10} style={styles.photoClose}>
-            <Ionicons name="close" size={18} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      )}
-
       <View style={styles.header}>
-        {!photoUri && (
-          <View
-            style={[
-              styles.iconWrap,
-              { backgroundColor: "#F59E0B18", borderColor: "#F59E0B40" },
-            ]}
-          >
-            <Ionicons name={poiIcon(props.category)} size={20} color="#F59E0B" />
-          </View>
-        )}
+        <View
+          style={[
+            styles.iconWrap,
+            { backgroundColor: "#F59E0B18", borderColor: "#F59E0B40" },
+          ]}
+        >
+          <Ionicons name={poiIcon(props.category)} size={20} color="#F59E0B" />
+        </View>
         <View style={{ flex: 1 }}>
           <Text style={[styles.name, { color: c.text }]} numberOfLines={2}>
             {poiDisplayName(props.name, props.category, t)}
@@ -139,11 +121,9 @@ function PoiBody({
             </Text>
           )}
         </View>
-        {!photoUri && (
-          <TouchableOpacity onPress={onClose} hitSlop={10} style={styles.close}>
-            <Ionicons name="close" size={20} color={c.muted} />
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity onPress={onClose} hitSlop={10} style={styles.close}>
+          <Ionicons name="close" size={20} color={c.muted} />
+        </TouchableOpacity>
       </View>
 
       {typeof props.rating === "number" && (
@@ -204,19 +184,7 @@ function PoiBody({
         </View>
       )}
 
-      {genParams && isAi && props.essential ? (
-        <View
-          style={[
-            styles.waypointBtn,
-            { backgroundColor: c.tint + "15", borderColor: c.tint, opacity: 0.7 },
-          ]}
-        >
-          <Ionicons name="checkmark-circle-outline" size={16} color={c.tint} />
-          <Text style={[styles.waypointBtnText, { color: c.tint }]}>
-            {t("route-map.on-route")}
-          </Text>
-        </View>
-      ) : genParams ? (
+      {genParams ? (
         <TouchableOpacity
           style={[
             styles.waypointBtn,
@@ -282,24 +250,6 @@ const styles = StyleSheet.create({
   name: { fontSize: 16, fontWeight: "700" },
   category: { fontSize: 13, marginTop: 2 },
   close: { padding: 4 },
-  photoWrap: {
-    position: "relative",
-    marginHorizontal: -16,
-    marginTop: -16,
-    marginBottom: 12,
-  },
-  photo: { width: "100%", aspectRatio: 4 / 3, backgroundColor: "#00000010" },
-  photoClose: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "rgba(0,0,0,0.55)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
   ratingRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 10 },
   ratingValue: { fontSize: 14, fontWeight: "700" },
   ratingCount: { fontSize: 12 },

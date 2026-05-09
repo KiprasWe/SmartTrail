@@ -4,14 +4,14 @@ vi.mock("jsonwebtoken", () => ({
   default: { verify: vi.fn() },
 }));
 
-vi.mock("../../../config/db.js", () => ({
+vi.mock("../../config/db.js", () => ({
   prisma: {
     user: { findUnique: vi.fn() },
   },
 }));
 
 import jwt from "jsonwebtoken";
-import { prisma } from "../../../config/db.js";
+import { prisma } from "../../config/db.js";
 import { authMiddleware } from "../../middleware/authMiddleware.js";
 
 function mockRes() {
@@ -42,7 +42,8 @@ describe("authMiddleware", () => {
   it("returns 401 when no token is present", async () => {
     await authMiddleware(req, res, next);
     expect(res._status).toBe(401);
-    expect(res._body.error).toMatch(/not authorized/i);
+    expect(res._body.status).toBe("error");
+    expect(res._body.code).toBe("NOT_AUTHORIZED");
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -88,7 +89,7 @@ describe("authMiddleware", () => {
     await authMiddleware(req, res, next);
 
     expect(res._status).toBe(401);
-    expect(res._body.error).toMatch(/no longer exists/i);
+    expect(res._body.code).toBe("USER_NOT_FOUND");
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -101,7 +102,7 @@ describe("authMiddleware", () => {
     await authMiddleware(req, res, next);
 
     expect(res._status).toBe(401);
-    expect(res._body.error).toMatch(/not authorized/i);
+    expect(res._body.code).toBe("NOT_AUTHORIZED");
     expect(next).not.toHaveBeenCalled();
   });
 

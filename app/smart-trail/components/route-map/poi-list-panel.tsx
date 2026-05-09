@@ -7,7 +7,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import {
   poiIcon,
   translatePoiCategory,
@@ -30,8 +30,6 @@ export function PoiListPanel({
   bottomInset,
   colors: c,
 }: Props) {
-  const { t } = useTranslation();
-
   return (
     <View
       style={[
@@ -139,5 +137,4 @@ const styles = StyleSheet.create({
   },
   rowName: { fontSize: 14, fontWeight: "600" },
   rowCategory: { fontSize: 12, marginTop: 1 },
-  rowDist: { fontSize: 12, flexShrink: 0 },
 });

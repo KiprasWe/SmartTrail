@@ -2,7 +2,6 @@ import { useCallback, useState } from "react";
 import {
   View,
   Text,
-  Image,
   TouchableOpacity,
   TextInput,
   Modal,
@@ -20,9 +19,13 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 import { useProfileStore } from "@/store/use-profile-store";
 import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
+import {
+  formatDistanceMeters,
+  formatDuration,
+} from "@/lib/route-map-helpers";
 import type { SavedRouteListItem } from "@/types/route";
 import { RoutePreview } from "@/components/saved-routes/route-preview";
 import {
@@ -30,31 +33,15 @@ import {
   mainTabHeaderIconHitStyle,
 } from "@/components/ui/tab-screen-header";
 import { TRANSPORT_OPTIONS } from "@/components/generate/route-form-components";
+import { Avatar } from "@/components/ui/avatar";
 
-// Routes saved before the backend fix stored the human-readable label instead
-// of the profile key. This maps those old values back to keys so they still
-// resolve to a translated label.
+// Older saved routes stored display labels instead of profile keys; map them
+// back so we can still pick the right icon and translation.
 const LEGACY_LABEL_TO_KEY: Record<string, string> = {
   Walking: "foot-walking",
   Hiking: "foot-hiking",
   Running: "running",
   Cycling: "cycling-regular",
-  "Road Cycling": "cycling-road",
-  "Mountain Biking": "cycling-mountain",
-};
-
-const AVATAR_PLACEHOLDER = (name: string) =>
-  `https://ui-avatars.com/api/?background=16A34A&color=fff&size=256&bold=true&name=${encodeURIComponent(name)}`;
-
-const formatDistance = (metres: number) =>
-  metres < 1000
-    ? `${Math.round(metres)} m`
-    : `${(metres / 1000).toFixed(1)} km`;
-
-const formatDuration = (seconds: number) => {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m} min`;
 };
 
 export default function ProfileScreen() {
@@ -62,7 +49,6 @@ export default function ProfileScreen() {
   const scheme = useColorScheme() ?? "light";
   const isDark = scheme === "dark";
   const ts = Colors[scheme];
-  const { t } = useTranslation();
   const router = useRouter();
 
   const savedRoutes = useSavedRoutesStore((s) => s.routes);
@@ -98,10 +84,10 @@ export default function ProfileScreen() {
       setEditingRoute(null);
     } catch {
       Alert.alert(t("common.error"), t("profile.edit-route-save-error"));
-    } finally {
-      setEditSaving(false);
-    }
-  }, [editingRoute, editTitle, editDescription, updateRoute, t]);
+      } finally {
+        setEditSaving(false);
+      }
+    }, [editingRoute, editTitle, editDescription, updateRoute]);
 
   const handleDelete = useCallback(
     (id: string, title: string) => {
@@ -127,7 +113,7 @@ export default function ProfileScreen() {
         ],
       );
     },
-    [removeRoute, t],
+    [removeRoute],
   );
 
   useFocusEffect(
@@ -174,8 +160,6 @@ export default function ProfileScreen() {
       </View>
     );
   }
-
-  const avatarUri = AVATAR_PLACEHOLDER(profile?.username ?? "User");
 
   return (
     <View style={[styles.root, { backgroundColor: ts.bg }]}>
@@ -312,14 +296,13 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
       >
-        {/* Avatar + info */}
         <View style={styles.profileSection}>
-          <Image
-            source={{ uri: avatarUri }}
-            style={[
-              styles.avatar,
-              { borderColor: ts.border, backgroundColor: ts.surface },
-            ]}
+          <Avatar
+            name={profile?.username ?? "User"}
+            size={88}
+            backgroundColor={ts.tint}
+            borderColor={ts.border}
+            style={styles.avatar}
           />
           <Text style={[styles.username, { color: ts.text }]}>
             {profile?.username ?? "—"}
@@ -332,7 +315,6 @@ export default function ProfileScreen() {
           ) : null}
         </View>
 
-        {/* Saved routes */}
         <View style={styles.savedSection}>
           <Text style={[styles.sectionTitle, { color: ts.text }]}>
             {t("profile.saved-routes")}
@@ -365,7 +347,6 @@ export default function ProfileScreen() {
                 const transportOption = TRANSPORT_OPTIONS.find(
                   (o) => o.key === transportKey,
                 );
-                const icon = transportOption?.icon ?? "map-outline";
                 const transportLabel = transportOption
                   ? t(transportOption.tKey)
                   : (r.transport ?? "");
@@ -404,14 +385,26 @@ export default function ProfileScreen() {
                           {r.title}
                         </Text>
                         <View style={styles.savedCardMetaRow}>
-                          <Ionicons name={icon} size={12} color={ts.muted} />
+                          {transportOption ? (
+                            <MaterialCommunityIcons
+                              name={transportOption.icon}
+                              size={12}
+                              color={ts.muted}
+                            />
+                          ) : (
+                            <Ionicons
+                              name="map-outline"
+                              size={12}
+                              color={ts.muted}
+                            />
+                          )}
                           <Text
                             style={[styles.savedCardMeta, { color: ts.muted }]}
                             numberOfLines={1}
                           >
                             {transportLabel}
                             {" · "}
-                            {formatDistance(r.distance)} ·{" "}
+                            {formatDistanceMeters(r.distance)} ·{" "}
                             {formatDuration(r.duration)}
                             {r.ascent != null ? ` · ↑${r.ascent} m` : ""}
                           </Text>
@@ -486,18 +479,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     gap: 4,
   },
-  avatar: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    borderWidth: 1,
-    marginBottom: 12,
-  },
+  avatar: { marginBottom: 12 },
   username: { fontSize: 20, fontWeight: "700", letterSpacing: -0.2 },
   email: { fontSize: 14 },
   bio: { fontSize: 14, textAlign: "center", lineHeight: 20, marginTop: 4 },
 
-  // Saved routes section
   savedSection: {
     paddingHorizontal: 20,
     gap: 12,

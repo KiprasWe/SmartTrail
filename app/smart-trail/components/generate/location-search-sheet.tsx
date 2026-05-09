@@ -23,16 +23,13 @@ import {
   PhotonFeature,
   ResolvedLocation,
 } from "@/hooks/use-location-search";
-import i18n from "@/lib/i18n";
+import i18n, { t } from "@/lib/i18n";
 
-// Photon supports: de, en, fr, it — everything else falls back to en
 const PHOTON_SUPPORTED = new Set(["de", "en", "fr", "it"]);
 function photonLang(): string {
   const code = i18n.locale?.split("-")[0] ?? "en";
   return PHOTON_SUPPORTED.has(code) ? code : "en";
 }
-
-// ─── Props ────────────────────────────────────────────────────────────────────
 
 interface LocationSearchSheetProps {
   visible: boolean;
@@ -41,8 +38,6 @@ interface LocationSearchSheetProps {
   onSelect: (location: ResolvedLocation) => void;
   onClose: () => void;
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export function LocationSearchSheet({
   visible,
@@ -60,12 +55,14 @@ export function LocationSearchSheet({
 
   const [query, setQuery] = useState("");
   const [locating, setLocating] = useState(false);
-  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [gpsCoords, setGpsCoords] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
 
   const slideAnim = useRef(new Animated.Value(300)).current;
   const activeRef = useRef(false);
 
-  // ── Animate in/out ──
   useEffect(() => {
     if (visible) {
       activeRef.current = true;
@@ -78,12 +75,16 @@ export function LocationSearchSheet({
         stiffness: 220,
       }).start();
 
-      // Silently grab last-known GPS for search bias (no permission prompt)
-      Location.getLastKnownPositionAsync({}).then((pos) => {
-        if (pos && activeRef.current) {
-          setGpsCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        }
-      }).catch(() => {});
+      Location.getLastKnownPositionAsync({})
+        .then((pos) => {
+          if (pos && activeRef.current) {
+            setGpsCoords({
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            });
+          }
+        })
+        .catch(() => {});
     } else {
       activeRef.current = false;
       Keyboard.dismiss();
@@ -93,9 +94,11 @@ export function LocationSearchSheet({
         useNativeDriver: true,
       }).start();
     }
+    // slideAnim is a stable ref-backed Animated.Value; clearResults is a stable
+    // hook callback. Only `visible` should re-trigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
-  // ── Search as user types ──
   const handleChangeText = useCallback(
     (text: string) => {
       setQuery(text);
@@ -123,13 +126,16 @@ export function LocationSearchSheet({
           longitude: lng,
         });
         if (native) {
-          const parts = [
+          const label = [
             native.name,
             native.street,
             native.city,
             native.country,
-          ].filter(Boolean);
-          resolved = { label: parts.join(", "), coords: { lat, lng } };
+          ]
+            .filter(Boolean)
+            .join(", ");
+          // Only accept the native fallback if it actually produced text.
+          if (label) resolved = { label, coords: { lat, lng } };
         }
       }
 
@@ -138,13 +144,11 @@ export function LocationSearchSheet({
         onClose();
       }
     } catch {
-      // silently ignore — user can still type
     } finally {
       setLocating(false);
     }
   }, [onSelect, onClose, reverseGeocode]);
 
-  // ── Select result ──
   const handleSelect = (feature: PhotonFeature) => {
     onSelect({
       label: [feature.label, feature.sublabel].filter(Boolean).join(", "),
@@ -155,7 +159,6 @@ export function LocationSearchSheet({
 
   const showEmptyState = !loading && query.length > 1 && results.length === 0;
 
-  /** Lives inside FlatList header so keyboardShouldPersistTaps applies (single tap). */
   const myLocationHeader = useCallback(
     () => (
       <TouchableOpacity
@@ -177,7 +180,9 @@ export function LocationSearchSheet({
           )}
         </View>
         <Text style={[styles.myLocationLabel, { color: ts.tint }]}>
-          {locating ? i18n.t("generate.getting-location") : i18n.t("generate.use-my-location")}
+          {locating
+            ? t("generate.getting-location")
+            : t("generate.use-my-location")}
         </Text>
       </TouchableOpacity>
     ),
@@ -192,14 +197,12 @@ export function LocationSearchSheet({
       statusBarTranslucent
       onRequestClose={onClose}
     >
-      {/* Backdrop */}
       <TouchableOpacity
         style={styles.backdrop}
         activeOpacity={1}
         onPress={onClose}
       />
 
-      {/* Sheet */}
       <KeyboardAvoidingView
         style={styles.kvWrapper}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -277,7 +280,11 @@ export function LocationSearchSheet({
                     { backgroundColor: ts.surface, borderColor: ts.border },
                   ]}
                 >
-                  <Ionicons name="location-outline" size={14} color={ts.muted} />
+                  <Ionicons
+                    name="location-outline"
+                    size={14}
+                    color={ts.muted}
+                  />
                 </View>
                 <View style={styles.resultText}>
                   <Text
@@ -307,7 +314,7 @@ export function LocationSearchSheet({
                     style={{ opacity: 0.4 }}
                   />
                   <Text style={[styles.emptyText, { color: ts.muted }]}>
-                    No results for &quot;{query}&quot;
+                    {t("generate.no-results")}
                   </Text>
                 </View>
               ) : null
@@ -318,8 +325,6 @@ export function LocationSearchSheet({
     </Modal>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   backdrop: {
@@ -337,7 +342,6 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     maxHeight: "80%",
     overflow: "hidden",
-    // Shadow
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -2 },
     shadowOpacity: 0.08,

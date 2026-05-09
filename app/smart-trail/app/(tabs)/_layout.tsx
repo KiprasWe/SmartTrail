@@ -3,12 +3,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { useColorScheme } from "react-native";
 import { Colors } from "@/constants/theme";
 import { HapticTab } from "@/components/haptic-tab";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 
 export default function TabLayout() {
   const scheme = useColorScheme() ?? "light";
   const ts = Colors[scheme];
-  const { t } = useTranslation();
 
   return (
     <Tabs

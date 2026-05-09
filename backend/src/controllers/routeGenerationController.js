@@ -1,140 +1,193 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendError, sendSuccess, Errors, Success } from "../utils/responses.js";
-import { PROFILE_CONFIGS } from "../lib/profiles.js";
+import { PROFILE_CONFIGS, calcDuration } from "../lib/profiles.js";
 import { routeBbox, haversineM } from "../lib/geo.js";
+import { optimizeWaypointSequence } from "../lib/waypoint-optimize.js";
 import {
   fetchORSDirections,
   orsFeatureToRouteData,
   buildORSElevationOpts,
   fetchRoutePois,
+  filterUnreachablePois,
 } from "../lib/ors.js";
 import { generateLoop } from "../lib/loop-algo.js";
-import { fetchWithTimeout } from "../utils/http.js";
+import { genai, GEMINI_MODEL, extractJsonArray } from "../lib/ai/shared.js";
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
 
-const ORS_CATEGORY_GROUP_MAP = {
-  nature: [330],        // natural
-  tourism: [620],       // tourism
-  historic: [220],      // historic
-  food: [560],          // sustenance
-  arts_culture: [130],  // arts_and_culture
-  leisure: [260],       // leisure_and_entertainment
+const ORS_CATEGORY_MAP = {
+  nature:      { groupIds: [330],  categoryIds: [279, 280] },
+  tourism:     { groupIds: [],     categoryIds: [627, 335, 623] },
+  historic:    { groupIds: [220],  categoryIds: [] },
+  food:        { groupIds: [560],  categoryIds: [] },
+  arts_culture:{ groupIds: [130],  categoryIds: [621] },
+  leisure: {
+    groupIds: [260],
+    categoryIds: [],
+    // Fetch the full group 260 but post-filter to these sub-categories only,
+    // excluding adult venues, casinos, strip clubs, etc.
+    catFilter: {
+      rangeMin: 261, rangeMax: 310,
+      allowed: new Set([262,263,264,265,266,267,268,269,270,271,272,273,274,275,
+                        276,277,278,279,280,281,282,283,284,285,286,287,288,289,
+                        290,291,292,293,294,295,296,297,299,300,301,304,305,306,
+                        308,309,310]),
+    },
+  },
 };
 
+function buildPoiParams(poiTypes) {
+  const groupSet = new Set();
+  const catSet = new Set();
+  const catFilters = [];
+  for (const t of poiTypes) {
+    const map = ORS_CATEGORY_MAP[t.toLowerCase()];
+    if (!map) continue;
+    map.groupIds.forEach((id) => groupSet.add(id));
+    map.categoryIds.forEach((id) => catSet.add(id));
+    if (map.catFilter) catFilters.push(map.catFilter);
+  }
+  return { groupIds: [...groupSet], categoryIds: [...catSet], catFilters };
+}
+
+function applyCatFilters(features, catFilters) {
+  if (!catFilters.length) return features;
+  return features.filter((f) => {
+    const ids = Object.keys(f.properties?.category_ids ?? {}).map(Number);
+    return catFilters.every(({ rangeMin, rangeMax, allowed }) => {
+      const inRange = ids.filter((id) => id >= rangeMin && id <= rangeMax);
+      return inRange.length === 0 || inRange.some((id) => allowed.has(id));
+    });
+  });
+}
+
 function normOrsPoiFeature(feature, idx) {
-  const props = feature.properties ?? {};
   const coords = feature.geometry?.coordinates;
-  if (!coords) return null;
+  if (!Array.isArray(coords) || coords.length < 2) return null;
+
   const [lng, lat] = coords;
-  const catEntry = Object.values(props.category_ids ?? {})[0];
+
+  const props = feature.properties || {};
+  const category =
+    Object.values(props.category_ids || {})[0]?.category_name || null;
+
+  const name = props.osm_tags?.name || props.name;
   return {
     type: "Feature",
-    geometry: { type: "Point", coordinates: [lng, lat] },
+    geometry: {
+      type: "Point",
+      coordinates: [lng, lat],
+    },
     properties: {
       id: props.osm_id ?? `ors-${idx}`,
-      name:
-        props.osm_tags?.name || props.name || catEntry?.category_name || null,
-      category: catEntry?.category_name ?? null,
-      rating: null,
-      user_rating_count: null,
-      photo_name: null,
-      editorial_summary: null,
+      name,
+      category, // "park", "restaurant", etc.
     },
   };
 }
 
-// POIs are fetched within a 300m straight-line buffer of the route, so any POI
-// that requires >3.5km of actual road travel to reach is almost certainly behind
-// a barrier (river, motorway, fenced area). The ORS matrix API tells us the real
-// routed distance from evenly-sampled route points to each POI.
-const MATRIX_SOURCE_COUNT = 10;
-const MATRIX_MAX_LOCATIONS = 50; // conservative for ORS free tier
-const BARRIER_MAX_ROUTED_M = 3500;
+// Adapts GeoJSON POI features for filterUnreachablePois (which expects {lng, lat} objects),
+// runs the matrix filter, then returns the original features that survived.
+async function filterPoiFeaturesByReachability(features, routeCoords, orsProfile) {
+  if (!features.length || routeCoords.length < 2) return features;
 
-async function filterPoisByReachability(pois, routeCoords, orsProfile) {
-  if (!pois.length || !ORS_API_KEY || routeCoords.length < 2) return pois;
-
-  const srcCount = Math.min(MATRIX_SOURCE_COUNT, routeCoords.length);
+  const srcCount = Math.min(10, routeCoords.length);
   const step = (routeCoords.length - 1) / (srcCount - 1);
-  const sources = Array.from({ length: srcCount }, (_, i) =>
-    routeCoords[Math.round(i * step)],
+  const anchors = Array.from(
+    { length: srcCount },
+    (_, i) => routeCoords[Math.round(i * step)],
   );
 
-  const maxDests = MATRIX_MAX_LOCATIONS - srcCount;
-  const kept = [];
-  let droppedCount = 0;
+  const internal = features.map((f) => ({
+    lng: f.geometry.coordinates[0],
+    lat: f.geometry.coordinates[1],
+    name: f.properties.name ?? "unnamed",
+    place_id: String(f.properties.id ?? f.geometry.coordinates),
+  }));
 
-  for (let offset = 0; offset < pois.length; offset += maxDests) {
-    const batch = pois.slice(offset, offset + maxDests);
-    const locations = [
-      ...sources,
-      ...batch.map((f) => f.geometry.coordinates),
-    ];
-
-    let distances;
-    try {
-      const res = await fetchWithTimeout(
-        `https://api.openrouteservice.org/v2/matrix/${orsProfile}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: ORS_API_KEY,
-          },
-          body: JSON.stringify({
-            locations,
-            sources: sources.map((_, i) => i),
-            destinations: batch.map((_, i) => srcCount + i),
-            metrics: ["distance"],
-            resolve_locations: false,
-          }),
-        },
-        15_000,
-      );
-
-      if (!res.ok) {
-        console.warn(`[poi-reachability] Matrix ${res.status} — keeping batch as-is`);
-        kept.push(...batch);
-        continue;
-      }
-
-      ({ distances } = await res.json());
-    } catch (err) {
-      console.warn(`[poi-reachability] Matrix error: ${err.message} — keeping batch as-is`);
-      kept.push(...batch);
-      continue;
-    }
-
-    for (let di = 0; di < batch.length; di++) {
-      let minRoutedM = Infinity;
-      for (let si = 0; si < sources.length; si++) {
-        const d = distances[si]?.[di];
-        if (d != null && d < minRoutedM) minRoutedM = d;
-      }
-
-      if (minRoutedM > BARRIER_MAX_ROUTED_M) {
-        droppedCount++;
-        console.log(
-          `[poi-reachability] Dropped "${batch[di].properties.name}" ` +
-            `— ${(minRoutedM / 1000).toFixed(1)}km by road from nearest route point`,
-        );
-        continue;
-      }
-
-      kept.push(batch[di]);
-    }
-  }
-
-  console.log(
-    `[poi-reachability] ${pois.length} fetched → ${kept.length} reachable` +
-      (droppedCount ? ` (${droppedCount} barrier-blocked dropped)` : ""),
+  const kept = await filterUnreachablePois(orsProfile, anchors, internal);
+  const keptIds = new Set(kept.map((p) => p.place_id));
+  return features.filter((f) =>
+    keptIds.has(String(f.properties.id ?? f.geometry.coordinates)),
   );
-
-  return kept;
 }
 
-function rankAndLimitPois(pois, routeCoords, count) {
+function poiRouteProgress(poiCoords, routeCoords) {
+  let minDist = Infinity;
+  let closestIdx = 0;
+  for (let i = 0; i < routeCoords.length; i++) {
+    const d = haversineM(poiCoords, routeCoords[i]);
+    if (d < minDist) {
+      minDist = d;
+      closestIdx = i;
+    }
+  }
+  return Math.round((closestIdx / Math.max(routeCoords.length - 1, 1)) * 100);
+}
+
+async function geminiSelectPois(pois, count, routeCoords) {
+  if (!count || pois.length <= count) return pois;
+  if (!genai) return rankAndLimitPoisFallback(pois, count, routeCoords);
+
+  const poiList = pois
+    .map((f, i) => {
+      const p = f.properties;
+      const pct = poiRouteProgress(f.geometry.coordinates, routeCoords);
+      return `[${i}] ${p.name ?? "unnamed"} (${p.category ?? "unknown"}) — route position: ${pct}%`;
+    })
+    .join("\n");
+
+  const prompt = [
+    `You are a travel guide. A user is planning a route and wants to visit exactly ${count} POI(s).`,
+    `Each POI has a "route position" (0% = start, 100% = end) showing where along the route it sits.`,
+    `Select the ${count} most interesting and worth-visiting places, ensuring they are spread out along the full length of the route.`,
+    `Avoid picking POIs that are all clustered near the same route position — aim for variety across the whole route.`,
+    ``,
+    `POIs near the route:`,
+    poiList,
+    ``,
+    `Return a JSON array of exactly ${count} index number(s) from the list above. Example: [0, 4, 7]`,
+    `Return ONLY the JSON array, nothing else.`,
+  ].join("\n");
+
+  try {
+    const r = await genai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: { responseMimeType: "application/json", temperature: 0.3 },
+    });
+
+    let parsed;
+    try {
+      parsed = JSON.parse(r.text ?? "");
+    } catch {
+      parsed = extractJsonArray(r.text ?? "");
+    }
+
+    if (!Array.isArray(parsed) || !parsed.length)
+      throw new Error("empty response");
+
+    const selected = parsed
+      .filter((i) => typeof i === "number" && i >= 0 && i < pois.length)
+      .slice(0, count)
+      .map((i) => pois[i]);
+
+    if (selected.length === 0) throw new Error("no valid indices");
+
+    console.log(
+      `[poi-select] Gemini picked ${selected.length}/${pois.length}: ` +
+        selected.map((f) => f.properties.name).join(", "),
+    );
+    return selected;
+  } catch (err) {
+    console.warn(
+      `[poi-select] Gemini failed (${err.message}), falling back to score rank`,
+    );
+    return rankAndLimitPoisFallback(pois, count, routeCoords);
+  }
+}
+
+function rankAndLimitPoisFallback(pois, count, routeCoords) {
   if (!count || pois.length <= count) return pois;
   const anchors = thinForInsertion(routeCoords, 50);
   return pois
@@ -149,149 +202,50 @@ function rankAndLimitPois(pois, routeCoords, count) {
     .map((r) => r.feature);
 }
 
+// Merges per-profile ORS options (avoid_features, weightings, preference) with
+// elevation-specific opts so both take effect on every request.
+function buildProfileOpts(profileConfig, elevPref) {
+  const elevOpts = buildORSElevationOpts(elevPref, profileConfig.orsProfile);
+  const avoidFeatures = [
+    ...(profileConfig.options?.avoid_features ?? []),
+    ...(elevOpts.options?.avoid_features ?? []),
+  ];
+  const weightings = {
+    ...(profileConfig.profileParams?.weightings ?? {}),
+    ...(elevOpts.profileParams?.weightings ?? {}),
+  };
+  return {
+    ...(profileConfig.preference && { preference: profileConfig.preference }),
+    ...(avoidFeatures.length > 0 && {
+      options: { avoid_features: avoidFeatures },
+    }),
+    ...(Object.keys(weightings).length > 0 && {
+      profileParams: { weightings },
+    }),
+  };
+}
+
 async function fetchPoiFeatures(routeCoords, poiTypes) {
   if (!poiTypes.length) return [];
-  const groupIds = [
-    ...new Set(
-      poiTypes.flatMap((t) => ORS_CATEGORY_GROUP_MAP[t.toLowerCase()] ?? []),
-    ),
-  ].slice(0, 5);
-  if (!groupIds.length) return [];
-  const raw = await fetchRoutePois(routeCoords, groupIds);
-  return raw.map((f, i) => normOrsPoiFeature(f, i)).filter(Boolean);
+  const { groupIds, categoryIds, catFilters } = buildPoiParams(poiTypes);
+  console.log(`[poi-fetch] types=${poiTypes} → groupIds=${groupIds} categoryIds=${categoryIds}`);
+  if (!groupIds.length && !categoryIds.length) return [];
+  const raw = await fetchRoutePois(routeCoords, { groupIds, categoryIds });
+  const filtered = applyCatFilters(raw, catFilters);
+  const normed = filtered.map((f, i) => normOrsPoiFeature(f, i)).filter(Boolean);
+  console.log(`[poi-fetch] ${raw.length} raw → ${filtered.length} after cat filter → ${normed.length} named`);
+  return normed;
 }
 
 export const directRouting = asyncHandler(async (req, res) => {
-  const { start, end, profile, poiTypes, poiCount, elevationPreference, waypoints } =
-    req.body;
-
-  const profileConfig = PROFILE_CONFIGS[profile];
-  if (!profileConfig)
-    return sendError(res, { ...Errors.BAD_REQUEST, message: `Invalid profile: ${profile}` });
-  const locations = [start, ...waypoints, end];
-  const orsElevOpts = buildORSElevationOpts(
-    elevationPreference,
-    profileConfig.orsProfile,
-  );
-  const needsElevPick =
-    elevationPreference === "flat" || elevationPreference === "hilly" || elevationPreference === "optimal";
-
-  let pickedData;
-  try {
-    if (waypoints.length === 0 && needsElevPick) {
-      const orsResult = await fetchORSDirections(
-        profileConfig.orsProfile,
-        locations,
-        {
-          ...orsElevOpts,
-          alternativeRoutes: {
-            target_count: 3,
-            weight_factor: 1.6,
-            share_factor: 0.4,
-          },
-        },
-      );
-      const features = orsResult.features ?? [];
-      if (!features.length) throw new Error("ORS returned no route");
-
-      const candidates = features.map((f) => orsFeatureToRouteData(f));
-      if (elevationPreference === "optimal") {
-        const sorted = [...candidates].sort((a, b) => a.ascent_m - b.ascent_m);
-        pickedData = sorted[Math.floor(sorted.length / 2)];
-      } else {
-        pickedData = candidates.reduce((best, c) =>
-          elevationPreference === "flat"
-            ? c.ascent_m < best.ascent_m ? c : best
-            : c.ascent_m > best.ascent_m ? c : best,
-        );
-      }
-
-      console.log(
-        `[directRouting] picked ${elevationPreference} from ${candidates.length} alternatives — ` +
-          `ascents: ${candidates.map((c) => c.ascent_m + "m").join(" / ")} → chose ${pickedData.ascent_m}m`,
-      );
-    } else {
-      const orsResult = await fetchORSDirections(
-        profileConfig.orsProfile,
-        locations,
-        orsElevOpts,
-      );
-      const features = orsResult.features ?? [];
-      if (!features.length) throw new Error("ORS returned no route");
-      pickedData = orsFeatureToRouteData(features[0]);
-    }
-  } catch (err) {
-    return sendError(res, {
-      ...Errors.EXTERNAL_SERVICE_ERROR,
-      message: `Route generation failed: ${err.message}`,
-    });
-  }
-
-  const {
-    coords,
-    elevArr,
-    ascent_m,
-    descent_m,
-    maneuvers,
-    distance_km,
-  } = pickedData;
-  const duration_s = Math.round(pickedData.duration_s * (profileConfig.speedFactor ?? 1));
-
-  const rawPois = await fetchPoiFeatures(coords, poiTypes);
-  const reachablePois = await filterPoisByReachability(rawPois, coords, profileConfig.orsProfile);
-  const pois = rankAndLimitPois(reachablePois, coords, poiCount);
-
-  const route = {
-    label: "recommended",
-    description: "Recommended route",
-    profile,
-    distance_km,
-    duration_s,
-    ascent_m,
-    descent_m,
-    geometry: { type: "LineString", coordinates: coords },
-    bbox: routeBbox(coords),
-    elevation_profile: elevArr,
-    maneuvers,
-    pois,
-  };
-
-  return sendSuccess(res, Success.ROUTE_GENERATED, {
-    profile,
-    elevation_preference: elevationPreference,
-    poi_types_requested: poiTypes,
-    routes: [route],
-  });
-});
-
-function buildLoopRoute(routeData, pois, profileKey, overlapRatio) {
-  return {
-    label: "loop",
-    description: "Loop route",
-    profile: profileKey,
-    distance_km: routeData.distance_km,
-    duration_s: routeData.duration_s,
-    ascent_m: routeData.ascent_m,
-    descent_m: routeData.descent_m,
-    geometry: { type: "LineString", coordinates: routeData.coords },
-    bbox: routeBbox(routeData.coords),
-    elevation_profile: routeData.elevArr,
-    maneuvers: routeData.maneuvers,
-    pois,
-    ...(overlapRatio != null && { overlap_ratio: overlapRatio }),
-  };
-}
-
-export const loopRouting = asyncHandler(async (req, res) => {
   const {
     start,
-    distance,
+    end,
     profile,
     poiTypes,
     poiCount,
     elevationPreference,
     waypoints,
-    controlPoints,
   } = req.body;
 
   if (!ORS_API_KEY) {
@@ -303,68 +257,169 @@ export const loopRouting = asyncHandler(async (req, res) => {
 
   const profileConfig = PROFILE_CONFIGS[profile];
   if (!profileConfig)
-    return sendError(res, { ...Errors.BAD_REQUEST, message: `Invalid profile: ${profile}` });
-  const orsProfile = profileConfig.orsProfile;
-  const orsElevOpts = buildORSElevationOpts(elevationPreference, orsProfile);
+    return sendError(res, {
+      ...Errors.BAD_REQUEST,
+      message: `Invalid profile: ${profile}`,
+    });
 
+  const locations = [start, ...waypoints, end];
+
+  const results = await Promise.allSettled(
+    ["flat", "moderate", "hilly"].map((level) =>
+      fetchORSDirections(
+        profileConfig.orsProfile,
+        locations,
+        buildProfileOpts(profileConfig, level),
+      ).then((r) => {
+        const feat = r.features?.[0];
+        return feat ? orsFeatureToRouteData(feat) : null;
+      }),
+    ),
+  );
+
+  const candidates = results
+    .filter((r) => r.status === "fulfilled" && r.value !== null)
+    .map((r) => r.value);
+
+  if (!candidates.length) {
+    const firstErr = results.find((r) => r.status === "rejected");
+    return sendError(res, {
+      ...Errors.EXTERNAL_SERVICE_ERROR,
+      message: `Route generation failed: ${firstErr?.reason?.message ?? "ORS returned no route"}`,
+    });
+  }
+
+  const sorted = [...candidates].sort((a, b) => a.ascent_m - b.ascent_m);
+  const last = sorted.length - 1;
+  const pickIdx = { flat: 0, moderate: Math.floor(last / 2), hilly: last };
+  const pickedData =
+    sorted[pickIdx[elevationPreference] ?? Math.floor(last / 2)];
+
+  console.log(
+    `[directRouting] elevation pick (${elevationPreference}): ` +
+      sorted.map((c) => `${c.ascent_m}m`).join(" / ") +
+      ` → chose ${pickedData.ascent_m}m`,
+  );
+
+  const { coords, elevArr, ascent_m, descent_m, maneuvers, distance_km } =
+    pickedData;
+  const duration_s = calcDuration(
+    distance_km,
+    pickedData.duration_s,
+    profileConfig,
+  );
+
+  const rawPois = await fetchPoiFeatures(coords, poiTypes);
+  const reachablePois = await filterPoiFeaturesByReachability(
+    rawPois,
+    coords,
+    profileConfig.orsProfile,
+  );
+  const pois = await geminiSelectPois(reachablePois, poiCount, coords);
+
+  return sendSuccess(res, Success.ROUTE_GENERATED, {
+    profile,
+    elevation_preference: elevationPreference,
+    routes: [
+      {
+        profile,
+        distance_km,
+        duration_s,
+        ascent_m,
+        descent_m,
+        geometry: { type: "LineString", coordinates: coords },
+        bbox: routeBbox(coords),
+        elevation_profile: elevArr,
+        maneuvers,
+        pois,
+      },
+    ],
+  });
+});
+
+export const loopRouting = asyncHandler(async (req, res) => {
+  const {
+    start,
+    distance,
+    profile,
+    poiTypes,
+    poiCount,
+    elevationPreference,
+    waypoints,
+    controlPoints,
+    travelHeading = 0,
+    rotation = "clockwise",
+  } = req.body;
+
+  if (!ORS_API_KEY) {
+    return sendError(res, {
+      ...Errors.EXTERNAL_SERVICE_ERROR,
+      message: "ORS_API_KEY is not configured",
+    });
+  }
+
+  const profileConfig = PROFILE_CONFIGS[profile];
+  if (!profileConfig)
+    return sendError(res, {
+      ...Errors.BAD_REQUEST,
+      message: `Invalid profile: ${profile}`,
+    });
+
+  const orsProfile = profileConfig.orsProfile;
   const farthestStopM = waypoints.length
     ? Math.max(...waypoints.map((w) => haversineM(start, w)))
     : 0;
   const stopForcesExtension = farthestStopM > distance * 1.5;
 
-  // For flat/hilly/optimal preference with pure or stops-only loops, generate multiple
-  // candidates with different random shapes and pick the best by ascent.
-  // controlPoints are user-drawn so we don't re-randomise those.
-  const needsElevPick = elevationPreference === "flat" || elevationPreference === "hilly" || elevationPreference === "optimal";
-  const loopAttempts = needsElevPick && !controlPoints?.length ? 3 : 1;
-
   let result;
   try {
-    if (loopAttempts === 1) {
+    if (controlPoints?.length > 0) {
       result = await generateLoop({
         start,
         targetM: distance,
         orsProfile,
-        orsElevOpts,
+        orsElevOpts: buildProfileOpts(profileConfig, elevationPreference),
         stops: waypoints,
         controlPoints,
+        travelHeading,
+        rotation,
       });
     } else {
-      const LOOP_DISTANCE_TOLERANCE = 0.12;
-      const candidates = [];
-      for (let i = 0; i < loopAttempts; i++) {
-        try {
-          const r = await generateLoop({
+      const results = await Promise.allSettled(
+        ["flat", "moderate", "hilly"].map((level) =>
+          generateLoop({
             start,
             targetM: distance,
             orsProfile,
-            orsElevOpts,
+            orsElevOpts: buildProfileOpts(profileConfig, level),
             stops: waypoints,
-          });
-          candidates.push(r);
-          const offRatio =
-            Math.abs(r.routeData.distance_km * 1000 - distance) / distance;
-          if (offRatio <= LOOP_DISTANCE_TOLERANCE) break;
-        } catch (err) {
-          console.warn(`[loopRouting] attempt ${i + 1} failed: ${err.message}`);
-        }
-      }
-      if (!candidates.length) throw new Error("All loop generation attempts failed");
+            travelHeading,
+            rotation,
+          }),
+        ),
+      );
 
-      if (elevationPreference === "optimal") {
-        const sorted = [...candidates].sort((a, b) => a.routeData.ascent_m - b.routeData.ascent_m);
-        result = sorted[Math.floor(sorted.length / 2)];
-      } else {
-        result = candidates.reduce((best, r) =>
-          elevationPreference === "flat"
-            ? r.routeData.ascent_m < best.routeData.ascent_m ? r : best
-            : r.routeData.ascent_m > best.routeData.ascent_m ? r : best,
+      const candidates = results
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value);
+
+      if (!candidates.length) {
+        const firstErr = results.find((r) => r.status === "rejected");
+        throw new Error(
+          firstErr?.reason?.message ?? "All loop generation attempts failed",
         );
       }
 
+      const sorted = [...candidates].sort(
+        (a, b) => a.routeData.ascent_m - b.routeData.ascent_m,
+      );
+      const last = sorted.length - 1;
+      const pickIdx = { flat: 0, moderate: Math.floor(last / 2), hilly: last };
+      result = sorted[pickIdx[elevationPreference] ?? Math.floor(last / 2)];
+
       console.log(
         `[loopRouting] elevation pick (${elevationPreference}): ` +
-          candidates.map((r) => `${r.routeData.ascent_m}m`).join(" / ") +
+          sorted.map((r) => `${r.routeData.ascent_m}m`).join(" / ") +
           ` → chose ${result.routeData.ascent_m}m`,
       );
     }
@@ -394,101 +449,49 @@ export const loopRouting = asyncHandler(async (req, res) => {
   );
 
   const rawPois = await fetchPoiFeatures(result.routeData.coords, poiTypes);
-  const reachablePois = await filterPoisByReachability(rawPois, result.routeData.coords, orsProfile);
-  const pois = rankAndLimitPois(reachablePois, result.routeData.coords, poiCount);
+  const reachablePois = await filterPoiFeaturesByReachability(
+    rawPois,
+    result.routeData.coords,
+    orsProfile,
+  );
+  const pois = await geminiSelectPois(
+    reachablePois,
+    poiCount,
+    result.routeData.coords,
+  );
 
-  const loopRouteData = profileConfig.speedFactor
-    ? { ...result.routeData, duration_s: Math.round(result.routeData.duration_s * profileConfig.speedFactor) }
-    : result.routeData;
+  const { distance_km, ascent_m, descent_m, coords, elevArr, maneuvers } =
+    result.routeData;
+  const duration_s = calcDuration(
+    distance_km,
+    result.routeData.duration_s,
+    profileConfig,
+  );
 
   return sendSuccess(res, Success.ROUTE_GENERATED, {
     profile,
     elevation_preference: elevationPreference,
-    poi_types_requested: poiTypes,
     controlPoints: result.controlPoints,
     loop_meta: meta,
     routes: [
-      buildLoopRoute(
-        loopRouteData,
-        pois,
+      {
         profile,
-        result.meta.overlap_ratio,
-      ),
+        distance_km,
+        duration_s,
+        ascent_m,
+        descent_m,
+        geometry: { type: "LineString", coordinates: coords },
+        bbox: routeBbox(coords),
+        elevation_profile: elevArr,
+        maneuvers,
+        pois,
+        ...(result.meta.overlap_ratio != null && {
+          overlap_ratio: result.meta.overlap_ratio,
+        }),
+      },
     ],
   });
 });
-
-export const addPoiToRoute = asyncHandler(async (req, res) => {
-  const { poi, legs, profile } = req.body;
-  const profileConfig = PROFILE_CONFIGS[profile];
-  if (!profileConfig)
-    return sendError(res, { ...Errors.BAD_REQUEST, message: `Invalid profile: ${profile}` });
-
-  let bestLegIdx = 0;
-  let bestDetour = Infinity;
-
-  for (let i = 0; i < legs.length; i++) {
-    const leg = legs[i];
-    const detour =
-      haversineM(leg.from, poi) +
-      haversineM(poi, leg.to) -
-      haversineM(leg.from, leg.to);
-    if (detour < bestDetour) {
-      bestDetour = detour;
-      bestLegIdx = i;
-    }
-  }
-
-  const targetLeg = legs[bestLegIdx];
-
-  let legA, legB;
-  try {
-    const [resA, resB] = await Promise.all([
-      fetchORSDirections(profileConfig.orsProfile, [targetLeg.from, poi], {}),
-      fetchORSDirections(profileConfig.orsProfile, [poi, targetLeg.to], {}),
-    ]);
-    const featA = resA.features?.[0];
-    const featB = resB.features?.[0];
-    if (!featA || !featB) throw new Error("ORS returned no route for leg");
-
-    const dataA = orsFeatureToRouteData(featA);
-    const dataB = orsFeatureToRouteData(featB);
-
-    legA = { from: targetLeg.from, to: poi, ...dataA };
-    legB = { from: poi, to: targetLeg.to, ...dataB };
-  } catch (err) {
-    return sendError(res, {
-      ...Errors.EXTERNAL_SERVICE_ERROR,
-      message: `POI insertion failed: ${err.message}`,
-    });
-  }
-
-  const newLegs = [
-    ...legs.slice(0, bestLegIdx),
-    legA,
-    legB,
-    ...legs.slice(bestLegIdx + 1),
-  ];
-
-  const sf = profileConfig.speedFactor ?? 1;
-  return sendSuccess(res, Success.ROUTE_GENERATED, {
-    legs: newLegs.map((leg) => ({
-      from: leg.from,
-      to: leg.to,
-      distance_km: leg.distance_km,
-      duration_s: Math.round(leg.duration_s * sf),
-      ascent_m: leg.ascent_m,
-      descent_m: leg.descent_m,
-      geometry: {
-        type: "LineString",
-        coordinates: leg.coords ?? leg.geometry?.coordinates,
-      },
-    })),
-  });
-});
-
-const SUGGESTION_LIMIT = 15;
-const SUGGESTION_CORRIDOR_M = 800;
 
 function thinForInsertion(coords, samples = 50) {
   if (coords.length <= samples) return coords;
@@ -522,53 +525,50 @@ function poiQualityScore(poi) {
   return rating * 5 + Math.min(reviews / 100, 5) + bonus;
 }
 
-export const aiReroute = asyncHandler(async (req, res) => {
-  const { start, end, distance, profile, elevationPreference, waypoints } = req.body;
+export const rerouteDirect = asyncHandler(async (req, res) => {
+  const { start, end, profile, elevationPreference, waypoints } = req.body;
 
   const profileConfig = PROFILE_CONFIGS[profile];
   if (!profileConfig)
-    return sendError(res, { ...Errors.BAD_REQUEST, message: `Invalid profile: ${profile}` });
+    return sendError(res, {
+      ...Errors.BAD_REQUEST,
+      message: `Invalid profile: ${profile}`,
+    });
 
   const orsProfile = profileConfig.orsProfile;
-  const orsElevOpts = buildORSElevationOpts(elevationPreference, orsProfile);
-  const hasEnd = Array.isArray(end) && end.length === 2;
+  const orsElevOpts = buildProfileOpts(profileConfig, elevationPreference);
 
   try {
-    let routeData;
-    if (hasEnd) {
-      const locs = [start, ...waypoints, end];
-      const radiuses =
-        waypoints.length > 0
-          ? [-1, ...waypoints.map(() => 1500), -1]
-          : undefined;
-      const orsResult = await fetchORSDirections(
-        orsProfile,
-        locs,
-        radiuses ? { ...orsElevOpts, radiuses } : orsElevOpts,
-      );
-      const feat = orsResult.features?.[0];
-      if (!feat) throw new Error("ORS returned no route");
-      routeData = orsFeatureToRouteData(feat);
-    } else {
-      const loopResult = await generateLoop({
-        start,
-        targetM: distance,
-        orsProfile,
-        orsElevOpts,
-        stops: waypoints,
-      });
-      routeData = loopResult.routeData;
-    }
+    const orderedWaypoints = optimizeWaypointSequence({
+      waypoints,
+      start,
+      end,
+      isLoop: false,
+    });
+    const locs = [start, ...orderedWaypoints, end];
+    const radiuses =
+      orderedWaypoints.length > 0
+        ? [-1, ...orderedWaypoints.map(() => 1500), -1]
+        : undefined;
+    const orsResult = await fetchORSDirections(
+      orsProfile,
+      locs,
+      radiuses ? { ...orsElevOpts, radiuses } : orsElevOpts,
+    );
+    const feat = orsResult.features?.[0];
+    if (!feat) throw new Error("ORS returned no route");
+    const routeData = orsFeatureToRouteData(feat);
 
-    const sf = profileConfig.speedFactor ?? 1;
     return sendSuccess(res, Success.ROUTE_GENERATED, {
       routes: [
         {
-          label: "recommended",
-          description: "AI Tour Guide route",
           profile,
           distance_km: routeData.distance_km,
-          duration_s: Math.round(routeData.duration_s * sf),
+          duration_s: calcDuration(
+            routeData.distance_km,
+            routeData.duration_s,
+            profileConfig,
+          ),
           ascent_m: routeData.ascent_m,
           descent_m: routeData.descent_m,
           geometry: { type: "LineString", coordinates: routeData.coords },
@@ -582,60 +582,196 @@ export const aiReroute = asyncHandler(async (req, res) => {
   } catch (err) {
     return sendError(res, {
       ...Errors.EXTERNAL_SERVICE_ERROR,
-      message: `AI reroute failed: ${err.message}`,
+      message: `Direct reroute failed: ${err.message}`,
     });
   }
 });
 
-export const loopPoiSuggestions = asyncHandler(async (req, res) => {
-  const { routeCoords, poiTypes, max } = req.body;
+export const rerouteLoop = asyncHandler(async (req, res) => {
+  const {
+    start,
+    distance,
+    profile,
+    elevationPreference,
+    waypoints,
+    controlPoints,
+    travelHeading = 0,
+    rotation = "clockwise",
+  } = req.body;
 
-  if (!ORS_API_KEY) {
+  const profileConfig = PROFILE_CONFIGS[profile];
+  if (!profileConfig)
     return sendError(res, {
-      ...Errors.EXTERNAL_SERVICE_ERROR,
-      message: "ORS_API_KEY is not configured",
+      ...Errors.BAD_REQUEST,
+      message: `Invalid profile: ${profile}`,
     });
-  }
 
-  const groupIds = [
-    ...new Set(
-      poiTypes.flatMap((t) => ORS_CATEGORY_GROUP_MAP[t.toLowerCase()] ?? []),
-    ),
-  ].slice(0, 5);
+  const orsProfile = profileConfig.orsProfile;
+  const orsElevOpts = buildProfileOpts(profileConfig, elevationPreference);
 
-  let raw = [];
   try {
-    raw = await fetchRoutePois(routeCoords, groupIds, SUGGESTION_CORRIDOR_M);
+    const orderedWaypoints = optimizeWaypointSequence({
+      waypoints,
+      start,
+      end: start,
+      isLoop: true,
+    });
+    const loopResult = await generateLoop({
+      start,
+      targetM: distance,
+      orsProfile,
+      orsElevOpts,
+      stops: orderedWaypoints,
+      controlPoints: Array.isArray(controlPoints) ? controlPoints : [],
+      travelHeading,
+      rotation,
+    });
+    const routeData = loopResult.routeData;
+
+    return sendSuccess(res, Success.ROUTE_GENERATED, {
+      routes: [
+        {
+          profile,
+          distance_km: routeData.distance_km,
+          duration_s: calcDuration(
+            routeData.distance_km,
+            routeData.duration_s,
+            profileConfig,
+          ),
+          ascent_m: routeData.ascent_m,
+          descent_m: routeData.descent_m,
+          geometry: { type: "LineString", coordinates: routeData.coords },
+          bbox: routeBbox(routeData.coords),
+          elevation_profile: routeData.elevArr,
+          maneuvers: routeData.maneuvers,
+          pois: [],
+        },
+      ],
+    });
   } catch (err) {
     return sendError(res, {
       ...Errors.EXTERNAL_SERVICE_ERROR,
-      message: `POI fetch failed: ${err.message}`,
+      message: `Loop reroute failed: ${err.message}`,
+    });
+  }
+});
+
+const SPLICE_BUFFER_M = 200;
+
+export const splicePoi = asyncHandler(async (req, res) => {
+  const { routeCoords, elevArr, poi, profile, elevationPreference, currentStats } = req.body;
+  const { distance_km: origDistKm, duration_s: origDurS, ascent_m: origAscent, descent_m: origDescent } = currentStats;
+
+  const profileConfig = PROFILE_CONFIGS[profile];
+  if (!profileConfig)
+    return sendError(res, { ...Errors.BAD_REQUEST, message: `Invalid profile: ${profile}` });
+
+  const orsProfile = profileConfig.orsProfile;
+  const orsElevOpts = buildProfileOpts(profileConfig, elevationPreference);
+
+  // Find closest route coord to poi
+  let closestIdx = 0;
+  let minDist = Infinity;
+  for (let i = 0; i < routeCoords.length; i++) {
+    const d = haversineM(poi, routeCoords[i]);
+    if (d < minDist) { minDist = d; closestIdx = i; }
+  }
+
+  // Walk backward ≥ SPLICE_BUFFER_M to find anchor A
+  let aIdx = closestIdx;
+  let acc = 0;
+  while (aIdx > 0 && acc < SPLICE_BUFFER_M) {
+    acc += haversineM(routeCoords[aIdx], routeCoords[aIdx - 1]);
+    aIdx--;
+  }
+
+  // Walk forward ≥ SPLICE_BUFFER_M to find anchor B
+  let bIdx = closestIdx;
+  acc = 0;
+  while (bIdx < routeCoords.length - 1 && acc < SPLICE_BUFFER_M) {
+    acc += haversineM(routeCoords[bIdx], routeCoords[bIdx + 1]);
+    bIdx++;
+  }
+
+  const A = routeCoords[aIdx];
+  const B = routeCoords[bIdx];
+
+  let segA, segB;
+  try {
+    const [resA, resB] = await Promise.all([
+      fetchORSDirections(orsProfile, [A, poi], orsElevOpts),
+      fetchORSDirections(orsProfile, [poi, B], orsElevOpts),
+    ]);
+    const featA = resA.features?.[0];
+    const featB = resB.features?.[0];
+    if (!featA || !featB) throw new Error("ORS returned no route for splice segment");
+    segA = orsFeatureToRouteData(featA);
+    segB = orsFeatureToRouteData(featB);
+  } catch (err) {
+    return sendError(res, {
+      ...Errors.EXTERNAL_SERVICE_ERROR,
+      message: `POI splice failed: ${err.message}`,
     });
   }
 
-  const features = raw.map((f, i) => normOrsPoiFeature(f, i)).filter(Boolean);
-  if (!features.length) {
-    return sendSuccess(res, Success.ROUTE_GENERATED, { suggestions: [] });
+  // Stitch geometry: prefix + A→P + P→B (skip duplicate P) + suffix
+  const newCoords = [
+    ...routeCoords.slice(0, aIdx),
+    ...segA.coords,
+    ...segB.coords.slice(1),
+    ...routeCoords.slice(bIdx + 1),
+  ];
+
+  // Stitch elevation array if provided and length-aligned
+  let newElevArr = null;
+  if (Array.isArray(elevArr) && elevArr.length === routeCoords.length) {
+    newElevArr = [
+      ...elevArr.slice(0, aIdx),
+      ...segA.elevArr,
+      ...segB.elevArr.slice(1),
+      ...elevArr.slice(bIdx + 1),
+    ];
   }
 
-  const anchors = thinForInsertion(routeCoords, 50);
+  // Distance delta: subtract replaced segment, add new segments
+  let replacedDistKm = 0;
+  for (let i = aIdx; i < bIdx; i++) {
+    replacedDistKm += haversineM(routeCoords[i], routeCoords[i + 1]) / 1000;
+  }
+  const newDistKm = +(Math.max(0, origDistKm - replacedDistKm) + segA.distance_km + segB.distance_km).toFixed(2);
 
-  const ranked = features
-    .filter((f) => f.properties.name) // hide unnamed dots
-    .map((f) => {
-      const coords = f.geometry.coordinates;
-      const addedM = cheapestInsertionAddedM(coords, anchors);
-      const quality = poiQualityScore(f);
-      const score = quality - addedM / 200;
-      return { feature: f, addedKm: +(addedM / 1000).toFixed(2), score };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, Math.min(Math.max(max, 1), 30));
+  // Duration: remove proportional share of replaced segment, add new segments
+  const replacedDurRatio = origDistKm > 0 ? replacedDistKm / origDistKm : 0;
+  const newOrsSeconds = Math.round(origDurS * (1 - replacedDurRatio)) + segA.duration_s + segB.duration_s;
+  const duration_s = calcDuration(newDistKm, newOrsSeconds, profileConfig);
+
+  // Ascent/descent: exact from stitched elevArr, or proportional fallback
+  let ascent_m, descent_m;
+  if (newElevArr) {
+    let up = 0, down = 0;
+    for (let i = 0; i < newElevArr.length - 1; i++) {
+      const diff = newElevArr[i + 1] - newElevArr[i];
+      if (diff > 0) up += diff; else down -= diff;
+    }
+    ascent_m = Math.round(up);
+    descent_m = Math.round(down);
+  } else {
+    const ratio = origDistKm > 0 ? replacedDistKm / origDistKm : 0;
+    ascent_m = Math.round(Math.max(0, origAscent * (1 - ratio)) + segA.ascent_m + segB.ascent_m);
+    descent_m = Math.round(Math.max(0, origDescent * (1 - ratio)) + segA.descent_m + segB.descent_m);
+  }
 
   return sendSuccess(res, Success.ROUTE_GENERATED, {
-    suggestions: ranked.map((r) => ({
-      ...r.feature,
-      properties: { ...r.feature.properties, added_km: r.addedKm },
-    })),
+    routes: [{
+      profile,
+      distance_km: newDistKm,
+      duration_s,
+      ascent_m,
+      descent_m,
+      geometry: { type: "LineString", coordinates: newCoords },
+      bbox: routeBbox(newCoords),
+      elevation_profile: newElevArr,
+      maneuvers: [],
+    }],
   });
 });

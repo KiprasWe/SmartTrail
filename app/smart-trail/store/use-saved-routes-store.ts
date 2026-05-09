@@ -10,7 +10,12 @@
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuthStore } from "./use-auth-store";
-import { getErrMessage } from "@/lib/error-messages";
+import { resolveErr } from "@/lib/error-messages";
+import {
+  downloadOfflinePack,
+  deleteOfflinePack,
+  deleteAllOfflinePacks,
+} from "@/lib/offline-map";
 import type {
   SavedRoute,
   SavedRouteListItem,
@@ -62,6 +67,7 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
     set({ routes: [], loading: false, error: null });
     const keys = [LIST_KEY, ...routes.map((r) => DETAIL_KEY(r.id))];
     Promise.all(keys.map((k) => AsyncStorage.removeItem(k))).catch(() => {});
+    deleteAllOfflinePacks(routes.map((r) => r.id)).catch(() => {});
   },
 
   bootstrap: async () => {
@@ -88,7 +94,7 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
       persistList(routes);
     } catch (err: unknown) {
       // Stay on cached data — no throw, offline is a valid state
-      set({ error: getErrMessage(err) });
+      set({ error: resolveErr(err) });
     } finally {
       set({ loading: false });
     }
@@ -108,6 +114,7 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
     AsyncStorage.setItem(DETAIL_KEY(route.id), JSON.stringify(route)).catch(
       () => {},
     );
+    downloadOfflinePack(route.id, route.bbox).catch(() => {});
     return route;
   },
 
@@ -186,6 +193,7 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
       const { authFetch } = useAuthStore.getState();
       await authFetch(`/routes/saved/${id}`, { method: "DELETE" });
       AsyncStorage.removeItem(DETAIL_KEY(id)).catch(() => {});
+      deleteOfflinePack(id).catch(() => {});
     } catch (err) {
       set({ routes: prev });
       persistList(prev);

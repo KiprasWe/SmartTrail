@@ -1,72 +1,98 @@
 import { z } from "zod";
 
+const INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?(previous|prior|above|system)\s+instructions?/i,
+  /you\s+are\s+now\b/i,
+  /forget\s+(all\s+)?(rules|instructions|context)/i,
+  /disregard\s+(previous|prior|above)\s+/i,
+  /new\s+system\s+prompt/i,
+  /<\|system\|>/i,
+  /###\s*system/i,
+  /\[INST\]/,
+];
+
+function isInjectionAttempt(text) {
+  return INJECTION_PATTERNS.some((p) => p.test(text));
+}
+
 // [lng, lat] array (GeoJSON order)
-const lngLat = z.tuple([z.number(), z.number()]);
+const lngLat = z
+  .tuple([z.number(), z.number()])
+  .refine(([lng, lat]) => lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90, {
+    message: "Invalid coordinates: lng must be -180..180, lat -90..90",
+  });
 
 const profile = z.enum([
   "foot-walking",
   "foot-hiking",
   "running",
   "cycling-regular",
-  "cycling-road",
-  "cycling-mountain",
-  "cycling-electric",
 ]);
 
 const elevationPreference = z
-  .enum(["flat", "optimal", "hilly", "auto"])
+  .enum(["flat", "moderate", "hilly"])
   .optional()
-  .default("auto");
+  .default("moderate");
+
+const poiTypeEnum = z.enum([
+  "nature",
+  "tourism",
+  "historic",
+  "food",
+  "arts_culture",
+  "leisure",
+]);
 
 export const atoBSchema = z.object({
   start: lngLat,
   end: lngLat,
   profile: profile.default("foot-walking"),
   elevationPreference,
-  poiTypes: z.array(z.string()).optional().default([]),
+  poiTypes: z.array(poiTypeEnum).max(6).optional().default([]),
   poiCount: z.number().int().min(0).max(20).optional().default(0),
-  waypoints: z.array(lngLat).optional().default([]),
+  waypoints: z.array(lngLat).max(10).optional().default([]),
 });
 
 export const loopSchema = z.object({
   start: lngLat,
-  distance: z.number().min(500).max(100_000), // metres
+  distance: z.number().min(500).max(6_000_000),
   profile: profile.default("foot-walking"),
   elevationPreference,
-  poiTypes: z.array(z.string()).optional().default([]),
+  poiTypes: z.array(poiTypeEnum).max(6).optional().default([]),
   poiCount: z.number().int().min(0).max(20).optional().default(0),
-  waypoints: z.array(lngLat).optional().default([]),
-  controlPoints: z.array(lngLat).optional().default([]),
+  waypoints: z.array(lngLat).max(10).optional().default([]),
+  controlPoints: z.array(lngLat).max(20).optional().default([]),
 });
 
-export const loopPoiSuggestSchema = z.object({
-  routeCoords: z.array(lngLat).min(2),
-  poiTypes: z.array(z.string()).optional().default(["nature", "tourism", "historic"]),
-  max: z.number().int().min(1).max(30).optional().default(15),
-});
-
-export const addPoiSchema = z.object({
+export const splicePoiSchema = z.object({
+  routeCoords: z.array(lngLat).min(4).max(20_000),
+  elevArr: z.array(z.number()).optional(),
   poi: lngLat,
-  legs: z
-    .array(
-      z.object({
-        from: lngLat,
-        to: lngLat,
-      }).passthrough(),
-    )
-    .min(1),
   profile: profile.default("foot-walking"),
+  elevationPreference,
+  currentStats: z.object({
+    distance_km: z.number().positive(),
+    duration_s: z.number().nonnegative(),
+    ascent_m: z.number().nonnegative(),
+    descent_m: z.number().nonnegative(),
+  }),
 });
 
 export const aiRouteSchema = z
   .object({
     start: lngLat,
     end: lngLat.optional(),
-    distance: z.number().min(500).max(100_000).optional(),
+    distance: z.number().min(500).max(6_000_000).optional(),
     profile: profile.default("foot-walking"),
     elevationPreference,
     area: z.string().max(200).optional(),
-    preferences: z.string().max(500).optional(),
+    preferences: z
+    .string()
+    .max(500)
+    .optional()
+    .refine((v) => !v || !isInjectionAttempt(v), {
+      message: "Invalid preferences input",
+    }),
     lang: z.enum(["en", "lt"]).default("en"),
     waypoints: z.array(lngLat).optional().default([]),
   })
@@ -75,19 +101,26 @@ export const aiRouteSchema = z
     path: ["distance"],
   });
 
-export const aiRerouteSchema = z
-  .object({
-    start: lngLat,
-    end: lngLat.optional(),
-    distance: z.number().min(500).max(100_000).optional(),
-    profile: profile.default("foot-walking"),
-    elevationPreference,
-    waypoints: z.array(lngLat).optional().default([]),
-  })
-  .refine((d) => d.end || typeof d.distance === "number", {
-    message: "Either end or distance is required",
-    path: ["distance"],
-  });
+/** A→B reroute with optional via-waypoints (simple + AI). */
+export const rerouteDirectSchema = z.object({
+  start: lngLat,
+  end: lngLat,
+  profile: profile.default("foot-walking"),
+  elevationPreference,
+  waypoints: z.array(lngLat).max(10).optional().default([]),
+});
+
+/** Loop reroute / full loop rebuild with stops (simple + AI). */
+export const rerouteLoopSchema = z.object({
+  start: lngLat,
+  distance: z.number().min(500).max(6_000_000),
+  profile: profile.default("foot-walking"),
+  elevationPreference,
+  waypoints: z.array(lngLat).max(10).optional().default([]),
+  controlPoints: z.array(lngLat).max(20).optional().default([]),
+  travelHeading: z.number().optional().default(0),
+  rotation: z.enum(["clockwise", "counterclockwise"]).optional().default("clockwise"),
+});
 
 export const saveRouteSchema = z.object({
   title: z.string().min(1).max(100),

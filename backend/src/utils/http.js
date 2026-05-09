@@ -1,5 +1,4 @@
 const TIMEOUT_ROUTING_MS = 30_000;
-export const TIMEOUT_PLACES_MS = 15_000;
 
 export async function fetchWithTimeout(
   url,

@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Location from "expo-location";
 import { useAuthStore } from "@/store/use-auth-store";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -54,7 +54,6 @@ export default function OnboardingScreen() {
   const tc = Colors[scheme];
   const insets = useSafeAreaInsets();
   const { completeOnboarding } = useAuthStore();
-  const { t } = useTranslation();
 
   const listRef = useRef<FlatList>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -79,7 +78,6 @@ export default function OnboardingScreen() {
   };
 
   const handleFinish = async () => {
-    // If on location slide and hasn't asked yet, ask first
     if (SLIDES[currentIndex].isPermission && !locationAsked) {
       await requestLocation();
       return;
@@ -138,7 +136,6 @@ export default function OnboardingScreen() {
     <View style={[styles.root, { backgroundColor: tc.bg }]}>
       <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
 
-      {/* Skip */}
       <View style={[styles.topBar, { paddingTop: insets.top + 12 }]}>
         <TouchableOpacity
           onPress={completeOnboarding}
@@ -151,7 +148,6 @@ export default function OnboardingScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Slides */}
       <FlatList
         ref={listRef}
         data={SLIDES}
@@ -168,9 +164,7 @@ export default function OnboardingScreen() {
         }}
       />
 
-      {/* Bottom */}
       <View style={[styles.bottom, { paddingBottom: insets.bottom + 24 }]}>
-        {/* Dots */}
         <View style={styles.dots}>
           {SLIDES.map((_, i) => (
             <View
@@ -186,7 +180,6 @@ export default function OnboardingScreen() {
           ))}
         </View>
 
-        {/* Actions */}
         <View style={styles.actions}>
           {isLast ? (
             <TouchableOpacity

@@ -59,13 +59,6 @@ describe("validate middleware (body source)", () => {
     const fields = res._body.issues.map((i) => i.field);
     expect(fields).toContain("name");
   });
-
-  it("skips validation when req.file exists and body is empty", () => {
-    const req = { body: {}, file: { fieldname: "avatar" } };
-    const next = vi.fn();
-    validate(personSchema)(req, mockRes(), next);
-    expect(next).toHaveBeenCalledOnce();
-  });
 });
 
 describe("validate middleware (query source)", () => {

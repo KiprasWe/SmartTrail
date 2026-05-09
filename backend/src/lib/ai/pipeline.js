@@ -1,55 +1,102 @@
 // lib/ai/pipeline.js — AI route-generation orchestrator.
 //
-// Six stages, each emitted over SSE via onStage():
-//   1. routing_skeleton — real ORS route we can build zones against
-//   2. ai_pois          — reverse geocode + mode-conditional POI discovery
-//   3. (mode detection — not a stage, runs with Stage 2)
-//   4. (named resolution — not a stage, runs inline)
-//   5. enriching        — intent decomp + ORS category search + pool assembly
-//   6. curating         — Gemini tour-guide curation
-//   7. routing          — final ORS call (A→B) or generateLoop() (loop)
+// Stages:
+//   1. ai_pois    — classify intent + reverse geocode + ground named places
+//   2. enriching  — ORS corridor search + build curation pool
+//   3. curating   — Gemini tour-guide curation
+//   4. routing    — final ORS call with selected waypoints
 //
-// Keep this file a thin orchestrator. Anything that doesn't need the full
-// pipeline state should move into one of the ai/* modules.
+// Gemini calls per request:
+//   category mode: 2  (classifyAndDecompose + tourGuideCurate)
+//   named mode:    2  (classifyAndDecompose + Maps grounding)
+//   mixed mode:    3  (classifyAndDecompose + Maps grounding + tourGuideCurate)
 
-import { haversineM, routeBbox, polylineCorridorFilter } from "../geo.js";
+import { haversineM, routeBbox } from "../geo.js";
 import { generateLoop } from "../loop-algo.js";
 import {
   reverseGeocodePlaceName,
-  discoverAllPois,
-  geocodeCity,
-  searchAreaByOsmTags,
+  searchAreaByCategories,
+  collectCategoryIds,
 } from "../places.js";
-import { fetchORSDirections, orsFeatureToRouteData, buildORSElevationOpts } from "../ors.js";
-import { PROFILE_CONFIGS } from "../profiles.js";
+import {
+  orsFeatureToRouteData,
+  buildORSElevationOpts,
+} from "../ors.js";
+import { PROFILE_CONFIGS, calcDuration } from "../profiles.js";
 import { PipelineError, Errors } from "../../utils/responses.js";
-
 import {
   dedupPois,
-  genai,
-  GEMINI_MODEL,
   ORS_API_KEY,
   ORS_WAYPOINT_CAP,
   PROFILE_FALLBACK_THEME,
 } from "./shared.js";
-import { buildRouteZones } from "./zones.js";
-import {
-  detectMode,
-  runNamedPoiPrepass,
-  getEffectiveTripDistance,
-  decomposeIntent,
-} from "./classify.js";
-import { extractSpatialAreas } from "./spatial.js";
-import { searchIntentsByZone } from "./search.js";
+import { createAiTrace } from "./trace.js";
+import { classifyAndDecompose } from "./classify.js";
 import { tourGuideCurate } from "./curate.js";
 import {
-  snapToSkeleton,
   sortPoisAlongLine,
   sortPoisAroundLoop,
   enrichedPoiToFeature,
   fetchORSWithFallback,
 } from "./waypoints.js";
-import { filterReachablePois } from "./reachability.js";
+import { resolveNamedPlacesWithGrounding } from "./grounding.js";
+
+function dedupPoisWithTrace(pois, trace, label = "dedup") {
+  if (!Array.isArray(pois) || !trace?.enabled) return dedupPois(pois);
+  const before = pois.length;
+  const byId = new Map();
+  const duplicates = [];
+  for (const p of pois) {
+    const id = p?.place_id;
+    if (!id) continue;
+    if (byId.has(id)) duplicates.push(p);
+    else byId.set(id, p);
+  }
+  const deduped = dedupPois(pois);
+  trace.summary(label, {
+    before,
+    after: deduped.length,
+    dropped_count: before - deduped.length,
+    duplicate_place_ids_sample: duplicates
+      .map((p) => p?.place_id)
+      .filter(Boolean)
+      .slice(0, 40),
+  });
+  return deduped;
+}
+
+function inferTravelHeadingFromText(text, lang = "en") {
+  if (!text || typeof text !== "string") return 0;
+  const t = text.toLowerCase();
+  const has = (re) => re.test(t);
+
+  if (has(/\b(north[\s-]?east|ne)\b/)) return 2;
+  if (has(/\b(south[\s-]?east|se)\b/)) return 4;
+  if (has(/\b(south[\s-]?west|sw)\b/)) return 6;
+  if (has(/\b(north[\s-]?west|nw)\b/)) return 8;
+  if (has(/\bnorth(ern)?\b/)) return 1;
+  if (has(/\beast(ern)?\b/)) return 3;
+  if (has(/\bsouth(ern)?\b/)) return 5;
+  if (has(/\bwest(ern)?\b/)) return 7;
+
+  if (lang === "lt") {
+    if (has(/šiaur(?:ė|es|ėje|in|inę|inėj|inėje)/)) return 1;
+    if (has(/piet(?:ūs|u|uose|in|inę|inėj|inėje)/)) return 5;
+    if (has(/ryt(?:ai|ų|uose|in|inę|inėj|inėje)/)) return 3;
+    if (has(/vakar(?:ai|ų|uose|in|inę|inėj|inėje)/)) return 7;
+  }
+
+  return 0;
+}
+
+function pickLoopTravelHeading({ preferences, intents, lang }) {
+  const fromIntents = Array.isArray(intents)
+    ? intents.find((i) => Number(i?.travel_heading) > 0)?.travel_heading
+    : 0;
+  const intentHeading = Math.max(0, Math.min(Number(fromIntents) || 0, 8));
+  if (intentHeading) return intentHeading;
+  return inferTravelHeadingFromText(preferences, lang);
+}
 
 export async function runAiPipeline(params, { onStage = () => {} } = {}) {
   const {
@@ -58,608 +105,372 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     distance,
     waypoints: userWaypointCoords = [],
     profile = "foot-walking",
-    elevationPreference = "optimal",
+    elevationPreference = "moderate",
     area,
     preferences,
     lang = "en",
   } = params;
 
-  // ── Validate ──
   const profileConfig = PROFILE_CONFIGS[profile];
   if (!profileConfig)
     throw new PipelineError(Errors.BAD_REQUEST, `Invalid profile.`);
   if (!Array.isArray(start) || start.length !== 2)
-    throw new PipelineError(
-      Errors.BAD_REQUEST,
-      "start must be a [lng, lat] array",
-    );
+    throw new PipelineError(Errors.BAD_REQUEST, "start must be a [lng, lat] array");
 
   const hasEnd = Array.isArray(end) && end.length === 2;
   if (!hasEnd && !(typeof distance === "number" && distance >= 500))
-    throw new PipelineError(
-      Errors.BAD_REQUEST,
-      "Either end or distance (>=500m) is required",
-    );
+    throw new PipelineError(Errors.BAD_REQUEST, "Either end or distance (>=500m) is required");
   if (!ORS_API_KEY)
-    throw new PipelineError(
-      Errors.EXTERNAL_SERVICE_ERROR,
-      "ORS_API_KEY is not configured",
-    );
+    throw new PipelineError(Errors.EXTERNAL_SERVICE_ERROR, "ORS_API_KEY is not configured");
 
   const tripDistanceM = hasEnd ? haversineM(start, end) : (distance ?? 10_000);
   const distanceKm = tripDistanceM / 1_000;
   const { orsProfile, label: profileLabel } = profileConfig;
   const orsElevOpts = buildORSElevationOpts(elevationPreference, orsProfile);
 
-  const validUserWaypointCoords = (
-    Array.isArray(userWaypointCoords) ? userWaypointCoords : []
-  ).filter(
-    (w) =>
-      Array.isArray(w) && w.length === 2 && isFinite(w[0]) && isFinite(w[1]),
-  );
+  const validUserWaypointCoords = (Array.isArray(userWaypointCoords) ? userWaypointCoords : [])
+    .filter((w) => Array.isArray(w) && w.length === 2 && isFinite(w[0]) && isFinite(w[1]));
 
-  // ── Stage 1: Route skeleton ───────────────────────────────────────────────
-  // Build the skeleton first so we have real geographic anchors for discovery.
-  //
-  // A→B: single ORS call through any user stops.
-  // Loop: use the unified loop-algo generator (cleanTails + scaling + TSP
-  //   for stops / circle|rectangle|figure8 for pure loops). The skeleton we
-  //   get back is a real, routable loop — same shape the final route will
-  //   take — so zones + discovery are built against it rather than a petal.
-  onStage("routing_skeleton");
+  const trace = createAiTrace();
+  trace.stage("start", {
+    hasEnd,
+    profile,
+    elevationPreference,
+    distanceKm,
+    user_waypoints_count: validUserWaypointCoords.length,
+    lang,
+  });
 
-  let skeletonCoords = null;
-  let skeletonDistanceM = 0;
-
-  if (hasEnd) {
-    try {
-      const locs = [start, ...validUserWaypointCoords, end];
-      const radiuses =
-        validUserWaypointCoords.length > 0
-          ? [-1, ...validUserWaypointCoords.map(() => 1500), -1]
-          : undefined;
-      const base = await fetchORSDirections(
-        orsProfile,
-        locs,
-        radiuses ? { radiuses } : {},
-      );
-      const feat = base.features?.[0];
-      skeletonCoords =
-        feat?.geometry?.coordinates?.map((c) => [c[0], c[1]]) ?? null;
-      skeletonDistanceM = feat?.properties?.summary?.distance ?? 0;
-    } catch (err) {
-      console.warn("[aiRouting] A→B skeleton failed:", err.message);
-    }
-  } else {
-    try {
-      const loopSkeleton = await generateLoop({
-        start,
-        targetM: tripDistanceM,
-        orsProfile,
-        orsElevOpts,
-        stops: validUserWaypointCoords,
-      });
-      skeletonCoords = loopSkeleton.routeData.coords;
-      skeletonDistanceM = loopSkeleton.routeData.distance_km * 1000;
-    } catch (err) {
-      console.warn(
-        "[aiRouting] Loop skeleton via loop-algo failed:",
-        err.message,
-      );
-    }
-  }
-
-  // ── Build geographic zones (needed for discovery bbox) ────────────────────
-  let zones;
-  if (hasEnd && skeletonCoords) {
-    zones = buildRouteZones(skeletonCoords, distanceKm, start, end);
-    console.log(
-      `[aiRouting] Zones (${zones.length}): ${zones.map((z) => `"${z.label}" r=${(z.searchRadius / 1000).toFixed(1)}km`).join(" | ")}`,
-    );
-  } else {
-    // Loop: use the skeleton coords (if we have them) to derive a search
-    // centre + radius that actually matches the loop extent. Falls back to
-    // haversine loop-radius if the skeleton call failed.
-    const loopRadius = tripDistanceM / (2 * Math.PI);
-    let loopCenter = start;
-    let loopSearchRadius = Math.max(3_000, loopRadius * 1.5);
-
-    if (skeletonCoords?.length) {
-      let sumLng = 0;
-      let sumLat = 0;
-      for (const [lng, lat] of skeletonCoords) {
-        sumLng += lng;
-        sumLat += lat;
-      }
-      loopCenter = [
-        sumLng / skeletonCoords.length,
-        sumLat / skeletonCoords.length,
-      ];
-      const maxRadiusFromCenter = skeletonCoords.reduce(
-        (max, c) => Math.max(max, haversineM(loopCenter, c)),
-        0,
-      );
-      loopSearchRadius = Math.max(3_000, maxRadiusFromCenter * 1.2);
-    }
-
-    zones = [
-      {
-        label: "throughout the loop",
-        anchor: loopCenter,
-        searchCenter: loopCenter,
-        searchRadius: loopSearchRadius,
-        fraction: 0.5,
-        isStart: true,
-        isEnd: false,
-        isCorridor: false,
-      },
-    ];
-  }
-
-  // ── Stage 2: Reverse geocode + mode-conditional discovery ──────────────────
-  //
-  // CATEGORY mode: skip broad Overpass discovery entirely — ORS category search
-  //   is the primary source (runs in Stage 5). No noise, no corridor filter needed.
-  //
-  // NAMED / MIXED mode: run Overpass discovery first so Gemini can match user's
-  //   free-text names against real OSM names (e.g. "pypliu" → "Pyplių piliakalnis").
-  //
-  // We don't know the mode yet, so we run a lightweight mode pre-check first
-  // (just detects named vs category from the raw text, no pool needed), then
-  // conditionally run discovery.
   onStage("ai_pois");
+  trace.stage("ai_pois");
 
-  const [placeStart, placeEnd, rawSpatialAreas] = await Promise.all([
+  const [placeStart, placeEnd] = await Promise.all([
     reverseGeocodePlaceName(start, lang).catch(() => null),
-    hasEnd
-      ? reverseGeocodePlaceName(end, lang).catch(() => null)
-      : Promise.resolve(null),
-    extractSpatialAreas(preferences, start, null, distanceKm, lang).catch(() => []),
+    hasEnd ? reverseGeocodePlaceName(end, lang).catch(() => null) : Promise.resolve(null),
   ]);
 
   if (placeStart) console.log(`[aiRouting] start → "${placeStart}"`);
-  if (placeEnd) console.log(`[aiRouting] end   → "${placeEnd}"`);
-  if (rawSpatialAreas.length) {
-    console.log(`[aiRouting] Spatial areas: ${rawSpatialAreas.map(a => `"${a.label}"`).join(", ")}`);
-  }
+  if (placeEnd)   console.log(`[aiRouting] end   → "${placeEnd}"`);
+  console.log(`[aiRouting] prompt → "${preferences?.trim() || "(none)"}"`);
 
-  // Quick pre-check: does this request mention any named places?
-  // We pass an empty pool — Gemini just classifies the text, no matching needed.
-  const preCheck = await detectMode(preferences, genai, GEMINI_MODEL, []);
-  const needsDiscovery = preCheck.mode === "named" || preCheck.mode === "mixed";
+  const classified = await classifyAndDecompose({
+    preferences, profileLabel, area, hasEnd,
+    placeStart, placeEnd, distanceKm, lang,
+    trace,
+  });
+  const { mode } = classified;
+  const normalizePlaceToken = (s) =>
+    String(s ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/[.,/#!$%^&*;:{}=\-_`~()'"“”‘’]/g, "")
+      .replace(/\s+/g, " ");
 
-  const discoveredPois = await discoverAllPois({ start, end, hasEnd, zones });
-  console.log(
-    `[aiRouting] Discovery: ${discoveredPois.length} POIs (${needsDiscovery ? "named/mixed mode" : "category corridor fallback"})`,
-  );
+  // If the user mentions the start/end city names in preferences ("Vilnius", "Trakai"),
+  // Gemini can treat them as "named places". We already know start/end from coordinates,
+  // so we remove these to avoid committing redundant anchors.
+  const startToken = normalizePlaceToken(placeStart);
+  const endToken = normalizePlaceToken(placeEnd);
+  const namedPlaces = (classified.namedPlaces ?? []).filter((n) => {
+    const t = normalizePlaceToken(n);
+    if (!t) return false;
+    if (startToken && t === startToken) return false;
+    if (endToken && t === endToken) return false;
+    return true;
+  });
 
-  // ── Stage 3: Mode detection — named/mixed gets real pool for name matching ──
-  const { mode, namedPlaces, hasCategories } = needsDiscovery
-    ? await detectMode(preferences, genai, GEMINI_MODEL, discoveredPois)
-    : preCheck;
-
-  console.log(
-    `[aiRouting] Mode: ${mode.toUpperCase()} | named: [${namedPlaces.join(", ")}] | categories: ${hasCategories}`,
-  );
-
-  // ── Stage 4: Resolve named POIs against the pool ──────────────────────────
-  const routeCenter = hasEnd
-    ? [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2]
-    : start;
-
-  const namedPois =
-    mode === "named" || mode === "mixed"
-      ? await runNamedPoiPrepass(
-          namedPlaces,
-          { routeCenter, start, end, hasEnd, lang },
-          discoveredPois,
-        )
+  const intents = classified.intents.length
+    ? classified.intents
+    : mode !== "named"
+      ? [{
+          theme: PROFILE_FALLBACK_THEME[profileLabel] ?? "scenic viewpoints and landmarks",
+          places_type: "tourism",
+          count: 8,
+          travel_heading: 0,
+        }]
       : [];
 
-  const userNamedPlaceIds = new Set(
-    namedPois.filter((p) => p.place_id).map((p) => p.place_id),
-  );
+  const loopTravelHeading = !hasEnd
+    ? pickLoopTravelHeading({ preferences, intents, lang })
+    : 0;
 
   console.log(
-    `[aiRouting] Named POI resolution: ${namedPois.length}/${namedPlaces.length} found`,
+    `[aiRouting] Mode: ${mode.toUpperCase()} | named: [${namedPlaces.join(", ")}] | intents: ${intents.length}`,
   );
-
-  const effectiveTripDistanceM = getEffectiveTripDistance(
-    tripDistanceM,
-    namedPois.length,
-  );
-  const distanceCapped = effectiveTripDistanceM !== Infinity;
-
-  console.log(
-    `[aiRouting] Skeleton: ${(skeletonDistanceM / 1000).toFixed(1)} km | requested: ${distanceKm.toFixed(1)} km | ` +
-      (distanceCapped
-        ? `budget: ${((tripDistanceM - skeletonDistanceM) / 1000).toFixed(1)} km`
-        : `budget: uncapped`),
-  );
-
-  const placesCtx = { start, end, hasEnd, lang };
-
-  // ── Stage 5: Intent decomposition + POI search ────────────────────────────
-  //
-  // CATEGORY mode: intents → ORS category search (targeted, type-filtered).
-  //   This IS the primary POI source. No discovery pool, no corridor filter.
-  //   The route will be built through these POIs, widening as needed.
-  //
-  // NAMED mode: no intent search at all. Named POIs are the entire route.
-  //   No gap fill — user knows exactly what they want.
-  //
-  // MIXED mode: named anchors already resolved. ORS category search fills
-  //   gaps between anchors for the generic category parts of the request.
-  onStage("enriching");
-
-  const intents =
-    mode !== "named"
-      ? await decomposeIntent({
-          mode,
-          profileLabel,
-          preferences,
-          area,
-          hasEnd,
-          placeStart,
-          placeEnd,
-          distanceKm,
-          lang,
-          namedPlaces,
-        }).catch(() => [])
-      : [];
-
-  const effectiveIntents = intents.length
-    ? intents
-    : mode === "category"
-      ? [
-          {
-            theme:
-              PROFILE_FALLBACK_THEME[profileLabel] ??
-              "scenic viewpoints and landmarks",
-            places_type: "tourist_attraction",
-            location_scope: hasEnd ? "along_route" : "at_start",
-            specific_area: "",
-            count: 8,
-          },
-        ]
-      : [];
-
-  const categoryPois =
-    mode !== "named" && effectiveIntents.length
-      ? await searchIntentsByZone(effectiveIntents, zones, placesCtx, skeletonCoords)
-      : [];
-
-  // ── Search spatial areas using intent OSM tags ────────────────────────────
-  // Finds POIs in user-specified spatial constraints (e.g. "west part", "old town")
-  // using precise OSM tags from the decomposed intents.
-  const spatialAreaPois = rawSpatialAreas.length && effectiveIntents.length
-    ? (await Promise.all(
-        rawSpatialAreas.map(area =>
-          Promise.all(
-            effectiveIntents
-              .filter(i => i.osm_tags?.length)
-              .map(i => searchAreaByOsmTags(area.center, area.radiusM, i.osm_tags, 20).catch(() => []))
-          ).then(results => results.flat())
-        )
-      )).flat()
-    : [];
-
-  if (spatialAreaPois.length) {
-    console.log(`[aiRouting] Spatial area discovery: ${spatialAreaPois.length} POIs from ${rawSpatialAreas.length} area(s)`);
-  }
-
-  // Tag them so corridor filter skips them
-  const taggedSpatialPois = spatialAreaPois.map(p => ({ ...p, _fromSpatialArea: true }));
-
-  // ── Geocode force_via_city intents ────────────────────────────────────────
-  // When Gemini marks a city as force_via_city, we geocode it and inject it
-  // as a mandatory ORS routing waypoint so the route physically goes through
-  // that city (not just searches near it).
-  const forcedCityNames = [
-    ...new Set(
-      effectiveIntents
-        .map((i) => i.force_via_city)
-        .filter((c) => typeof c === "string" && c.length > 0),
-    ),
-  ];
-
-  const forcedCityCoords = (
-    await Promise.all(
-      forcedCityNames.map((city) => geocodeCity(city, lang).catch(() => null)),
-    )
-  ).filter(Boolean);
-
-  if (forcedCityCoords.length > 0) {
+  if (intents.length) {
     console.log(
-      `[aiRouting] Force-via cities: [${forcedCityNames.join(", ")}] → ${forcedCityCoords.length} geocoded`,
+      `[aiRouting] categories:\n` +
+        intents.map((i) => `  • ${i.places_type || "(any)"} — "${i.theme}" (count=${i.count})`).join("\n"),
     );
   }
 
-  console.log(
-    `[aiRouting] Pool sources — category: ${categoryPois.length}, named: ${namedPois.length}, discovered: ${discoveredPois.length}`,
-  );
+  onStage("enriching");
+  trace.stage("enriching", {
+    mode,
+    named_places_count: namedPlaces.length,
+    intents_count: intents.length,
+  });
 
-  // ── User coordinate waypoints (always essential) ──
+  const tripBbox = hasEnd ? routeBbox([start, end]) : null;
+
+  const [groundedNamedPois, categoryPois] = await Promise.all([
+    (mode === "named" || mode === "mixed") && namedPlaces.length
+      ? resolveNamedPlacesWithGrounding(namedPlaces, start, {
+          lang,
+          bbox: tripBbox,
+          maxCandidates: 3,
+          trace,
+        })
+      : Promise.resolve([]),
+
+    mode !== "named" && intents.length
+      ? searchAreaByCategories(
+          start,
+          hasEnd ? end : null,
+          tripDistanceM,
+          collectCategoryIds(intents),
+          hasEnd,
+          trace,
+        ).catch((err) => {
+          console.warn(`[aiRouting] Area search failed: ${err.message}`);
+          return [];
+        })
+      : Promise.resolve([]),
+  ]);
+
+  if (namedPlaces.length > 0 && groundedNamedPois.length < namedPlaces.length) {
+    const found = new Set(groundedNamedPois.map((p) => p.name.toLowerCase()));
+    const missing = namedPlaces.filter((n) => !found.has(n.toLowerCase()));
+    if (missing.length > 0)
+      console.warn(`[aiRouting] Could not locate: ${missing.join(", ")} — proceeding without them`);
+  }
+
+  console.log(
+    `[aiRouting] POIs — category: ${categoryPois.length}, named: ${groundedNamedPois.length}`,
+  );
+  trace.summary("poi_sources", {
+    mode,
+    named_requested: namedPlaces,
+    named_resolved_count: groundedNamedPois.length,
+    category_pois_count: categoryPois.length,
+    category_group_ids: mode !== "named" ? collectCategoryIds(intents) : [],
+  });
+
   const userWaypoints = validUserWaypointCoords.map(([lng, lat]) => ({
-    lng,
-    lat,
-    name: "Must-stop",
-    description: null,
-    place_id: null,
-    formatted_address: null,
-    rating: null,
-    user_rating_count: null,
-    website_uri: null,
-    google_maps_uri: null,
-    types: [],
-    primary_type: null,
-    editorial_summary: null,
-    photo_name: null,
-    guide_note: null,
-    essential: true,
-    _isUserWaypoint: true,
+    lng, lat, name: "Must-stop", description: null, place_id: null,
+    formatted_address: null, rating: null, user_rating_count: null,
+    website_uri: null, google_maps_uri: null, types: [], primary_type: null,
+    editorial_summary: null, photo_name: null, guide_note: null,
+    essential: true, _isUserWaypoint: true,
   }));
 
-  // ── Pool assembly — different strategy per mode ───────────────────────────
-  //
-  // CATEGORY: ORS category results only. No corridor filter — the route
-  //   rebuilds through the waypoints, naturally widening to reach them.
-  //   Loop detour filter still applies to keep loops sane.
-  //
-  // NAMED: named POIs only. No filler, no extras.
-  //
-  // MIXED: named anchors + category POIs for the gaps. Corridor filter
-  //   applied only to category POIs (named anchors always bypass it).
   let enrichedPool;
-
-  if (mode === "category") {
-    const corridorCoords = skeletonCoords ?? (hasEnd ? [start, end] : [start]);
-    const filteredDiscovered = skeletonCoords
-      ? polylineCorridorFilter(discoveredPois, corridorCoords)
-      : discoveredPois;
-
-    // Always merge Overpass: ORS POI buffer is capped at 2km per zone, so
-    // 3-zone routes have large gaps between covered areas. Overpass covers
-    // the full corridor bbox and Gemini curation trims it to what fits.
-    // POIs tagged _fromSpecificArea bypass corridor filter — they were found
-    // in a geocoded city the user explicitly asked to visit.
-    const specificAreaPois = categoryPois.filter((p) => p._fromSpecificArea);
-    const regularCategoryPois = categoryPois.filter((p) => !p._fromSpecificArea);
-    const rawPool = dedupPois([...regularCategoryPois, ...filteredDiscovered]);
-
-    // Apply reachability filter to drop barrier-blocked POIs (river/fence/motorway).
-    // Skip if pool is small — not worth the ORS matrix round-trip.
-    // Use actual skeleton distance (not haversine straight-line) so midroute POIs
-    // aren't dropped by MAX_ROUTED_M when the route doubles back or curves a lot.
-    const reachabilityDistKm = skeletonDistanceM > 0 ? skeletonDistanceM / 1000 : distanceKm;
-    const reachabilityPool =
-      skeletonCoords && rawPool.length > 12
-        ? await filterReachablePois(rawPool, skeletonCoords, orsProfile, reachabilityDistKm).catch(
-            (err) => {
-              console.warn(
-                `[reachability] Category mode failed, using raw: ${err.message}`,
-              );
-              return rawPool;
-            },
-          )
-        : rawPool;
-
-    // Re-merge specific-area POIs after reachability (they bypass the barrier check
-    // because they may genuinely be off-corridor by design).
-    // Also merge spatial area POIs — they bypass corridor filter by design.
-    const allSpecificPois = dedupPois([...specificAreaPois, ...taggedSpatialPois]);
-    enrichedPool = dedupPois([...allSpecificPois, ...reachabilityPool]);
-    console.log(
-      `[aiRouting] Category pool: ${categoryPois.length} ORS (${specificAreaPois.length} specific-area, ${taggedSpatialPois.length} spatial) + ` +
-        `${filteredDiscovered.length} Overpass → ${reachabilityPool.length} after reachability ` +
-        `→ ${enrichedPool.length} total`,
-    );
-  } else if (mode === "named") {
-    enrichedPool = namedPois;
+  if (mode === "named") {
+    enrichedPool = groundedNamedPois;
+  } else if (mode === "mixed") {
+    enrichedPool = dedupPoisWithTrace([...groundedNamedPois, ...categoryPois], trace, "dedup_enriched_pool_mixed");
   } else {
-    const corridorCoords = skeletonCoords ?? (hasEnd ? [start, end] : [start]);
-    const filteredCategoryPois = skeletonCoords
-      ? polylineCorridorFilter(categoryPois, corridorCoords)
-      : categoryPois;
-
-    // Spatial area POIs bypass the corridor filter (they were explicitly requested
-    // outside the skeleton corridor).
-    const mixedPool = dedupPois([...namedPois, ...filteredCategoryPois, ...taggedSpatialPois]);
-
-    const namedIds = new Set(namedPois.map((p) => p.place_id));
-    const reachabilityChecked = await filterReachablePois(
-      mixedPool.filter((p) => !namedIds.has(p.place_id)),
-      skeletonCoords,
-      orsProfile,
-      skeletonDistanceM > 0 ? skeletonDistanceM / 1000 : distanceKm,
-    ).catch((err) => {
-      console.warn(
-        `[reachability] Failed, using unfiltered pool: ${err.message}`,
-      );
-      return mixedPool.filter((p) => !namedIds.has(p.place_id));
-    });
-
-    enrichedPool = dedupPois([...namedPois, ...reachabilityChecked]);
-    console.log(
-      `[aiRouting] Mixed pool: ${namedPois.length} anchors + ${reachabilityChecked.length} category (from ${categoryPois.length}, ${taggedSpatialPois.length} spatial)`,
-    );
+    enrichedPool = categoryPois;
   }
+  trace.summary("enriched_pool", {
+    mode,
+    enriched_pool_count: enrichedPool.length,
+    grounded_named_count: groundedNamedPois.length,
+    category_count: categoryPois.length,
+  });
 
-  const allPois = dedupPois([...enrichedPool, ...userWaypoints]);
-  console.log(
-    `[aiRouting] POI pool: ${allPois.length} total — ${allPois.map((p) => p.name).join(" | ") || "(none)"}`,
-  );
+  if (!enrichedPool.length && !userWaypoints.length)
+    throw new PipelineError(Errors.AI_GENERATION_FAILED, "No usable POIs found");
 
-  if (!enrichedPool.length && !userWaypoints.length) {
-    throw new PipelineError(
-      Errors.AI_GENERATION_FAILED,
-      "No usable POIs found",
-    );
-  }
-
-  // ── Stage 6: Curation ─────────────────────────────────────────────────────
-  // Gemini now curates from real verified places — no hallucinated names,
-  // no mismatched coordinates. The full place list is in its context.
   onStage("curating");
+  trace.stage("curating");
 
-  const committedPois = namedPois.map((p) => ({ ...p, essential: true }));
+  // Named places are always committed (essential); only category pool goes to Gemini
+  const committedPois = groundedNamedPois.map((p) => ({ ...p, essential: true }));
   const committedIds = new Set(committedPois.map((p) => p.place_id));
+  const curationPoolLimit = 1000;
+  const curationCandidates = enrichedPool.filter((p) => !committedIds.has(p.place_id));
 
-  const curationPool = enrichedPool.filter(
-    (p) => !committedIds.has(p.place_id),
-  );
+  const scoreCurationPoi = (p) => {
+    const hasWebsite = typeof p.website_uri === "string" && p.website_uri.trim().length > 0;
+    const hasWiki =
+      (typeof p.wikipedia_uri === "string" && p.wikipedia_uri.trim().length > 0) ||
+      (typeof p.wikidata === "string" && p.wikidata.trim().length > 0);
+    const rating = Number.isFinite(p.rating) ? p.rating : 0;
+    const pop = Number.isFinite(p.user_rating_count) ? Math.log10(1 + Math.max(0, p.user_rating_count)) : 0;
+    // Strongly prefer POIs with rich metadata (website/wiki) to reduce random low-signal places.
+    return (hasWebsite ? 100 : 0) + (hasWiki ? 140 : 0) + rating * 10 + pop * 6;
+  };
 
-  // Compute each curation-pool POI's fractional position along the skeleton
-  // (0 = start, 1 = end) so the curation prompt can enforce spread.
-  let routePositions = null;
-  if (skeletonCoords?.length > 1) {
-    const cumul = [0];
-    for (let i = 1; i < skeletonCoords.length; i++) {
-      cumul.push(cumul[i - 1] + haversineM(skeletonCoords[i - 1], skeletonCoords[i]));
-    }
-    const totalSkeletonM = cumul[cumul.length - 1];
+  const rankedCurationCandidates = [...curationCandidates]
+    .map((p) => ({ p, score: scoreCurationPoi(p) }))
+    .sort((a, b) => b.score - a.score);
 
-    if (totalSkeletonM > 0) {
-      routePositions = new Map();
-      for (const p of curationPool) {
-        let minDist = Infinity;
-        let bestIdx = 0;
-        for (let i = 0; i < skeletonCoords.length; i++) {
-          const d = haversineM([p.lng, p.lat], skeletonCoords[i]);
-          if (d < minDist) { minDist = d; bestIdx = i; }
-        }
-        routePositions.set(p.place_id, cumul[bestIdx] / totalSkeletonM);
-      }
-    }
+  const curationPool = rankedCurationCandidates.slice(0, curationPoolLimit).map(({ p }) => p);
+  const userNamedPlaceIds = new Set(groundedNamedPois.filter((p) => p.place_id).map((p) => p.place_id));
+  trace.summary("curation_pool", {
+    committed_count: committedPois.length,
+    enriched_pool_count: enrichedPool.length,
+    curation_pool_count: curationPool.length,
+    curation_pool_trimmed_to: curationPoolLimit,
+    curation_candidates_count: curationCandidates.length,
+    user_waypoints_count: userWaypoints.length,
+  });
+
+  // Optional verbose dump to inspect what made it into the Gemini pool.
+  // Enable with: AI_TRACE=1 AI_TRACE_POOL_DUMP=1
+  const poolDumpEnabled = String(process.env.AI_TRACE_POOL_DUMP ?? "").trim() === "1";
+  if (trace.enabled && poolDumpEnabled) {
+    const dumpN = Math.max(0, Math.min(Number(process.env.AI_TRACE_POOL_DUMP_N) || 60, 500));
+    const cutN = Math.max(0, Math.min(Number(process.env.AI_TRACE_POOL_DUMP_CUT_N) || 20, 200));
+    const top = rankedCurationCandidates.slice(0, dumpN);
+    const cut = rankedCurationCandidates.slice(curationPoolLimit, curationPoolLimit + cutN);
+
+    const row = ({ p, score }, idx, kind) => {
+      const hasWebsite = typeof p.website_uri === "string" && p.website_uri.trim().length > 0;
+      const hasWiki =
+        (typeof p.wikipedia_uri === "string" && p.wikipedia_uri.trim().length > 0) ||
+        (typeof p.wikidata === "string" && p.wikidata.trim().length > 0);
+      return {
+        kind, // "included_top" or "cut_after_limit"
+        rank: idx + 1,
+        score,
+        place_id: p.place_id ?? null,
+        name: p.name ?? null,
+        primary_type: p.primary_type ?? null,
+        website_uri: hasWebsite ? p.website_uri : null,
+        wikipedia_uri: p.wikipedia_uri ?? null,
+        wikidata: p.wikidata ?? null,
+        meta_flags: { hasWebsite, hasWiki },
+        rating: p.rating ?? null,
+        user_rating_count: p.user_rating_count ?? null,
+      };
+    };
+
+    console.log(
+      `[aiPool] ${JSON.stringify({
+        traceId: trace.id,
+        stage: "pre_gemini_pool",
+        limit: curationPoolLimit,
+        candidates: rankedCurationCandidates.length,
+        dumpTopN: top.length,
+        dumpCutN: cut.length,
+      })}`,
+    );
+    top.forEach((x, i) => console.log(`[aiPool] ${JSON.stringify(row(x, i, "included_top"))}`));
+    cut.forEach((x, i) => console.log(`[aiPool] ${JSON.stringify(row(x, i, "cut_after_limit"))}`));
   }
 
   let finalPois;
-  const curatedPois = await tourGuideCurate({
-    pois: curationPool,
-    profileLabel,
-    preferences,
-    placeStart,
-    placeEnd,
-    hasEnd,
-    distanceKm,
-    lang,
-    mode,
-    namedPois,
-    userNamedPlaceIds,
-    routePositions,
-  });
 
-  if (curatedPois) {
-    finalPois = dedupPois([...committedPois, ...curatedPois, ...userWaypoints]);
-    console.log(
-      `[aiRouting] Using Gemini curation (${finalPois.length} total stops)`,
-    );
-  } else {
-    console.warn("[aiRouting] Curation failed — falling back to rating rank");
+  if (curationPool.length > 0) {
+    const curatedPois = await tourGuideCurate({
+      pois: curationPool,
+      profileLabel,
+      preferences,
+      placeStart,
+      placeEnd,
+      hasEnd,
+      distanceKm,
+      lang,
+      mode,
+      namedPois: groundedNamedPois,
+      userNamedPlaceIds,
+      trace,
+    });
 
-    // ~1 stop per 4 km, hard-capped at 12. Committed/named/user waypoints
-    // always survive; only AI essentials consume the budget.
-    const maxEssentialStops = Math.max(
-      2,
-      Math.min(Math.round(distanceKm / 4), 12),
-    );
-    const aiEssentialBudget = Math.max(
-      0,
-      maxEssentialStops - committedPois.length,
-    );
-
-    const ranked = [...enrichedPool]
-      .filter((p) => !committedIds.has(p.place_id))
-      .sort(
-        (a, b) =>
+    if (curatedPois) {
+      finalPois = dedupPoisWithTrace(
+        [...committedPois, ...curatedPois, ...userWaypoints],
+        trace,
+        "dedup_final_pois_after_curation",
+      );
+      console.log(`[aiRouting] Curation: ${finalPois.length} total stops`);
+      trace.summary("final_pois_after_curation", {
+        final_count: finalPois.length,
+        committed_count: committedPois.length,
+        curated_count: curatedPois.length,
+        user_waypoints_count: userWaypoints.length,
+      });
+    } else {
+      console.warn("[aiRouting] Curation failed — falling back to rating rank");
+      const maxStops = Math.max(2, Math.min(Math.round(distanceKm / 4), 12));
+      const budget = Math.max(0, maxStops - committedPois.length);
+      const ranked = [...enrichedPool]
+        .filter((p) => !committedIds.has(p.place_id))
+        .sort((a, b) =>
           (b.rating ?? 0) - (a.rating ?? 0) ||
           (b.user_rating_count ?? 0) - (a.user_rating_count ?? 0),
-      );
-    const rankedWithFlags = ranked.map((p, i) => ({
-      ...p,
-      guide_note: null,
-      essential: userNamedPlaceIds.has(p.place_id)
-        ? true
-        : i < aiEssentialBudget,
-    }));
-
-    finalPois = dedupPois([
-      ...committedPois,
-      ...rankedWithFlags,
-      ...userWaypoints,
-    ]);
-    console.log(
-      `[aiRouting] Fallback rank: ${finalPois.length} stops ` +
-        `(${committedPois.length} committed + ${aiEssentialBudget} AI-essential)`,
+        )
+        .map((p, i) => ({
+          ...p,
+          guide_note: null,
+          essential: userNamedPlaceIds.has(p.place_id) ? true : i < budget,
+        }));
+      finalPois = dedupPois([...committedPois, ...ranked, ...userWaypoints]);
+      console.log(`[aiRouting] Fallback rank: ${finalPois.length} stops`);
+      trace.summary("final_pois_after_fallback_rank", {
+        maxStops,
+        budget_for_ai_essential: budget,
+        final_count: finalPois.length,
+        committed_count: committedPois.length,
+        ranked_count: ranked.length,
+        user_waypoints_count: userWaypoints.length,
+      });
+    }
+  } else {
+    finalPois = dedupPoisWithTrace(
+      [...committedPois, ...userWaypoints],
+      trace,
+      "dedup_final_pois_named_only",
     );
   }
 
-  // ── Sort and build features ──
   const allSorted = hasEnd
     ? sortPoisAlongLine(finalPois, start, end)
     : sortPoisAroundLoop(finalPois, start);
 
-  const poiFeatures = allSorted.map(enrichedPoiToFeature);
-
   const essentialOrdered = allSorted.filter((p) => p.essential);
-  const userWaypointsInEssential = essentialOrdered.filter(
-    (p) => p._isUserWaypoint,
-  );
+  const userWaypointsInEssential = essentialOrdered.filter((p) => p._isUserWaypoint);
   const aiEssentialOrdered = essentialOrdered.filter((p) => !p._isUserWaypoint);
-  // For A→B: sortPoisAlongLine gives a good projection-based order.
-  // For loops: generateLoop's internal TSP re-orders stops anyway.
+  // Ensure every essential stop actually influences the routed path.
+  // Otherwise short trips can mark something "essential" but then drop it from ORS waypoints.
+  const computedCap = Math.round(distanceKm / 7);
+  const essentialCount = essentialOrdered.length;
+  const waypointCap = Math.max(2, Math.min(Math.max(computedCap, essentialCount), ORS_WAYPOINT_CAP));
   const waypointPois = [
     ...userWaypointsInEssential,
-    ...aiEssentialOrdered.slice(
-      0,
-      ORS_WAYPOINT_CAP - userWaypointsInEssential.length,
-    ),
+    ...aiEssentialOrdered.slice(0, waypointCap - userWaypointsInEssential.length),
   ];
-
-  const waypointCoords = waypointPois.map((p) => {
-    // Category mode: never snap — the route should bend through the POI,
-    // not the POI be dragged back to the skeleton.
-    // Named/user waypoints: always use exact coords.
-    if (
-      mode === "category" ||
-      p._isUserWaypoint ||
-      p._userNamed ||
-      !skeletonCoords
-    )
-      return [p.lng, p.lat];
-    return snapToSkeleton([p.lng, p.lat], skeletonCoords, profile);
-  });
-
-  // Merge forced city coords into the waypoint list, sorted along the route.
-  // City anchors are droppable (protectedCount unchanged) — if ORS can't reach
-  // a city anchor it falls back gracefully via fetchORSWithFallback.
-  let allWaypointCoords = waypointCoords;
-  if (forcedCityCoords.length > 0) {
-    if (hasEnd) {
-      // Sort everything along the start→end line then merge
-      const [sx, sy] = start;
-      const dx = end[0] - sx;
-      const dy = end[1] - sy;
-      const lenSq = dx * dx + dy * dy || 1;
-      const project = ([x, y]) => ((x - sx) * dx + (y - sy) * dy) / lenSq;
-      allWaypointCoords = [...forcedCityCoords, ...waypointCoords].sort(
-        (a, b) => project(a) - project(b),
-      );
-    } else {
-      // For loops prepend city anchors; loop-algo TSP re-orders stops anyway
-      allWaypointCoords = [...forcedCityCoords, ...waypointCoords];
-    }
-    console.log(
-      `[aiRouting] Injected ${forcedCityCoords.length} city anchor(s) → ` +
-        `${allWaypointCoords.length} total waypoints`,
+  const droppedEssentialDueToCap = aiEssentialOrdered.slice(
+    Math.max(0, waypointCap - userWaypointsInEssential.length),
+  );
+  if (droppedEssentialDueToCap.length) {
+    droppedEssentialDueToCap.slice(0, 40).forEach((p) =>
+      trace.poiDecision("waypoint_drop_due_to_cap", p, { reason: "ors_waypoint_cap" }),
     );
   }
+  const waypointCoords = waypointPois.map((p) => [p.lng, p.lat]);
+  trace.summary("waypoint_selection", {
+    essential_total: essentialOrdered.length,
+    essential_user_waypoints: userWaypointsInEssential.length,
+    essential_ai: aiEssentialOrdered.length,
+    waypoint_cap: waypointCap,
+    waypoint_selected: waypointPois.length,
+    waypoint_dropped_due_to_cap: droppedEssentialDueToCap.length,
+  });
 
-  console.log(
-    `[aiRouting] Routing through ${allWaypointCoords.length} waypoints (${finalPois.length - waypointCoords.length} optional on map)`,
-  );
+  // Mark which POIs are actual ORS waypoints so the frontend seeds correctly.
+  const waypointPlaceIds = new Set(waypointPois.map((p) => p.place_id).filter(Boolean));
+  const poiFeatures = allSorted.map((poi, i) => {
+    const feat = enrichedPoiToFeature(poi, i);
+    feat.properties.is_route_waypoint = waypointPlaceIds.has(poi.place_id);
+    return feat;
+  });
 
-  // ── A→B routing ──
+  console.log(`[aiRouting] Routing through ${waypointCoords.length} waypoints`);
+  trace.metric("ors_waypoints_count", waypointCoords.length, { waypoint_cap: waypointCap });
+
   if (hasEnd) {
     onStage("routing", { mode: "a_to_b" });
     let orsResult;
@@ -667,53 +478,40 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       orsResult = await fetchORSWithFallback(
         orsProfile,
         start,
-        allWaypointCoords,
+        waypointCoords,
         end,
         orsElevOpts,
         userWaypointsInEssential.length,
       );
     } catch (err) {
-      throw new PipelineError(
-        Errors.EXTERNAL_SERVICE_ERROR,
-        `Route generation failed: ${err.message}`,
-      );
+      throw new PipelineError(Errors.EXTERNAL_SERVICE_ERROR, `Route generation failed: ${err.message}`);
     }
     const feature = orsResult.features?.[0];
     if (!feature)
-      throw new PipelineError(
-        Errors.EXTERNAL_SERVICE_ERROR,
-        "ORS returned no route",
-      );
+      throw new PipelineError(Errors.EXTERNAL_SERVICE_ERROR, "ORS returned no route");
     const routeData = orsFeatureToRouteData(feature);
-    console.log(
-      `[aiRouting] A→B final: ${routeData.distance_km} km (skeleton was ${(skeletonDistanceM / 1000).toFixed(1)} km)`,
-    );
+    console.log(`[aiRouting] A→B final: ${routeData.distance_km} km`);
     return {
       profile,
       elevation_preference: elevationPreference,
       poi_types_requested: [],
       routing_mode: mode,
       ai_plan: { pois: poiFeatures },
-      routes: [
-        {
-          label: "recommended",
-          description: "AI Tour Guide route",
-          profile,
-          distance_km: routeData.distance_km,
-          duration_s: routeData.duration_s,
-          ascent_m: routeData.ascent_m,
-          descent_m: routeData.descent_m,
-          geometry: { type: "LineString", coordinates: routeData.coords },
-          bbox: routeBbox(routeData.coords),
-          elevation_profile: routeData.elevArr,
-          maneuvers: routeData.maneuvers,
-          pois: poiFeatures,
-        },
-      ],
+      routes: [{
+        profile,
+        distance_km: routeData.distance_km,
+        duration_s: calcDuration(routeData.distance_km, routeData.duration_s, profileConfig),
+        ascent_m: routeData.ascent_m,
+        descent_m: routeData.descent_m,
+        geometry: { type: "LineString", coordinates: routeData.coords },
+        bbox: routeBbox(routeData.coords),
+        elevation_profile: routeData.elevArr,
+        maneuvers: routeData.maneuvers,
+        pois: poiFeatures,
+      }],
     };
   }
 
-  // ── Loop routing ──
   onStage("routing", { mode: "loop" });
   let loopResult;
   try {
@@ -722,18 +520,16 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       targetM: tripDistanceM,
       orsProfile,
       orsElevOpts,
-      stops: allWaypointCoords,
+      stops: waypointCoords,
+      travelHeading: loopTravelHeading,
     });
   } catch (err) {
-    throw new PipelineError(
-      Errors.EXTERNAL_SERVICE_ERROR,
-      `Loop routing failed: ${err.message}`,
-    );
+    throw new PipelineError(Errors.EXTERNAL_SERVICE_ERROR, `Loop routing failed: ${err.message}`);
   }
   const loopData = loopResult.routeData;
   console.log(
     `[aiRouting] Loop final: ${loopData.distance_km} km | requested: ${distanceKm.toFixed(1)} km | ` +
-      `accuracy: ${((loopData.distance_km / distanceKm) * 100).toFixed(0)}% | ascent: ${loopData.ascent_m} m`,
+      `accuracy: ${((loopData.distance_km / distanceKm) * 100).toFixed(0)}%`,
   );
   return {
     profile,
@@ -743,24 +539,18 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     ai_plan: { pois: poiFeatures },
     controlPoints: loopResult.controlPoints,
     loop_meta: loopResult.meta,
-    routes: [
-      {
-        label: "loop",
-        description: "AI Tour Guide loop",
-        profile,
-        distance_km: loopData.distance_km,
-        duration_s: loopData.duration_s,
-        ascent_m: loopData.ascent_m,
-        descent_m: loopData.descent_m,
-        geometry: { type: "LineString", coordinates: loopData.coords },
-        bbox: routeBbox(loopData.coords),
-        elevation_profile: loopData.elevArr,
-        maneuvers: loopData.maneuvers,
-        pois: poiFeatures,
-        ...(loopResult.meta.overlap_ratio != null && {
-          overlap_ratio: loopResult.meta.overlap_ratio,
-        }),
-      },
-    ],
+    routes: [{
+      profile,
+      distance_km: loopData.distance_km,
+      duration_s: calcDuration(loopData.distance_km, loopData.duration_s, profileConfig),
+      ascent_m: loopData.ascent_m,
+      descent_m: loopData.descent_m,
+      geometry: { type: "LineString", coordinates: loopData.coords },
+      bbox: routeBbox(loopData.coords),
+      elevation_profile: loopData.elevArr,
+      maneuvers: loopData.maneuvers,
+      pois: poiFeatures,
+      ...(loopResult.meta.overlap_ratio != null && { overlap_ratio: loopResult.meta.overlap_ratio }),
+    }],
   };
 }

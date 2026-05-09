@@ -2,8 +2,7 @@ import "dotenv/config";
 
 import express from "express";
 import cors from "cors";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { config } from "dotenv";
+import rateLimit from "express-rate-limit";
 import { connectDB, disconnectDB } from "./config/db.js";
 
 import authRoutes from "./routes/authRoutes.js";
@@ -13,7 +12,6 @@ import buildRoutesRouter from "./routes/routesRoutes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { startCleanupJob } from "./jobs/cleanupRefreshTokens.js";
 
-config();
 connectDB();
 startCleanupJob();
 
@@ -36,39 +34,36 @@ if (!corsOrigin && process.env.NODE_ENV === "production") {
   console.error("CORS_ORIGIN env var is required in production");
   process.exit(1);
 }
+
 app.use(cors({ origin: corsOrigin ?? "*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const globalLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 100,
-  skip: (req) => !!req.user?.id,
-  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
-});
-const authLimiter = rateLimit({ windowMs: 60_000, max: 10 });
-const generateLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 25,
-  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 80,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
-const sensitiveOpsLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 5,
-  keyGenerator: (req) => req.user?.id ?? ipKeyGenerator(req),
-  message: { status: "error", code: "RATE_LIMITED" },
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
-
-app.use(globalLimiter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-app.use("/auth", authLimiter, authRoutes);
-app.use("/user", userRoutes(sensitiveOpsLimiter));
-app.use("/routes", buildRoutesRouter(generateLimiter));
+app.use("/auth", authLimiter);
+app.use("/user", apiLimiter);
+app.use("/routes", apiLimiter);
+
+app.use("/auth", authRoutes);
+app.use("/user", userRoutes());
+app.use("/routes", buildRoutesRouter());
 
 app.use(errorHandler);
 

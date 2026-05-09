@@ -3,7 +3,6 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
-  StatusBar,
   StyleSheet,
   useColorScheme,
   Alert,
@@ -13,7 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useProfileStore } from "@/store/use-profile-store";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import { ScreenHeader } from "@/components/ui/screen-header";
 
 export default function SettingsScreen() {
@@ -22,7 +21,6 @@ export default function SettingsScreen() {
   const { profile } = useProfileStore();
   const scheme = useColorScheme() ?? "light";
   const ts = Colors[scheme];
-  const { t } = useTranslation();
 
   const handleSignOut = () => {
     Alert.alert(t("settings.sign-out"), t("settings.sign-out-confirm"), [
@@ -39,7 +37,6 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
       >
-        {/* ── Security ── */}
         <Text style={[styles.sectionLabel, { color: ts.muted }]}>
           {t("settings.security").toUpperCase()}
         </Text>
@@ -87,7 +84,6 @@ export default function SettingsScreen() {
           })()}
         </View>
 
-        {/* ── Account ── */}
         <Text style={[styles.sectionLabel, { color: ts.muted }]}>
           {t("settings.account").toUpperCase()}
         </Text>
@@ -155,22 +151,4 @@ const styles = StyleSheet.create({
   rowContent: { flex: 1 },
   rowTitle: { fontSize: 15, fontWeight: "600" },
   rowSubtitle: { fontSize: 12, marginTop: 1 },
-
-  segmentWrap: {
-    flexDirection: "row",
-    marginHorizontal: 16,
-    marginBottom: 14,
-    borderRadius: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    overflow: "hidden",
-  },
-  segment: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    paddingVertical: 9,
-  },
-  segmentLabel: { fontSize: 13, fontWeight: "600" },
 });

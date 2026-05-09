@@ -1,5 +1,5 @@
 import AntDesign from "@expo/vector-icons/AntDesign";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   StyleSheet,
   useColorScheme,
   StatusBar,
+  type TextStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import {
@@ -18,16 +19,17 @@ import {
 } from "react-native-keyboard-controller";
 import { useAuthStore } from "@/store/use-auth-store";
 import { Colors } from "@/constants/theme";
-import { useApiError } from "@/hooks/use-api-errors";
-import { useTranslation } from "@/hooks/use-translation";
+import { resolveErr } from "@/lib/error-messages";
+import { t } from "@/lib/i18n";
+
+// RFC 5322-light: tolerant enough for typos, strict enough to catch obvious junk.
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function AuthScreen() {
   const { signin, signup, signinWithGoogle } = useAuthStore();
   const scheme = useColorScheme() ?? "light";
-  const { resolve } = useApiError();
   const isDark = scheme === "dark";
   const tc = Colors[scheme];
-  const { t } = useTranslation();
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const isSignUp = mode === "signup";
@@ -39,6 +41,20 @@ export default function AuthScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [googleLoad, setGoogleLoad] = useState(false);
 
+  // Themed input style — derived once per scheme rather than duplicating across
+  // four <TextInput>s.
+  const inputStyle = useMemo<TextStyle[]>(
+    () => [
+      styles.input,
+      {
+        borderColor: tc.border,
+        color: tc.text,
+        backgroundColor: tc.surface,
+      },
+    ],
+    [tc],
+  );
+
   const switchMode = (next: "signin" | "signup") => {
     if (next === mode) return;
     setMode(next);
@@ -49,26 +65,38 @@ export default function AuthScreen() {
   };
 
   const handleSubmit = async () => {
+    const trimmedEmail = email.trim();
+    const trimmedUsername = username.trim();
+
+    // Required-field guard — unchanged behaviour, just centralised.
     if (isSignUp) {
-      if (!username || !email || !password || !confirmPassword) return;
-      setSubmitting(true);
-      try {
-        await signup(username, email, password, confirmPassword);
-      } catch (err: any) {
-        Alert.alert("Error", resolve(err));
-      } finally {
-        setSubmitting(false);
+      if (
+        !trimmedUsername ||
+        !trimmedEmail ||
+        !password ||
+        !confirmPassword
+      )
+        return;
+    } else if (!trimmedEmail || !password) {
+      return;
+    }
+
+    if (!EMAIL_REGEX.test(trimmedEmail)) {
+      Alert.alert(t("common.error"), t("auth.errors.invalid-email"));
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      if (isSignUp) {
+        await signup(trimmedUsername, trimmedEmail, password, confirmPassword);
+      } else {
+        await signin(trimmedEmail, password);
       }
-    } else {
-      if (!email || !password) return;
-      setSubmitting(true);
-      try {
-        await signin(email, password);
-      } catch (err: any) {
-        Alert.alert("Error", resolve(err));
-      } finally {
-        setSubmitting(false);
-      }
+    } catch (err: unknown) {
+      Alert.alert(t("common.error"), resolveErr(err));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -76,8 +104,8 @@ export default function AuthScreen() {
     setGoogleLoad(true);
     try {
       await signinWithGoogle();
-    } catch (err: any) {
-      Alert.alert("Error", resolve(err));
+    } catch (err: unknown) {
+      Alert.alert(t("common.error"), resolveErr(err));
     } finally {
       setGoogleLoad(false);
     }
@@ -91,7 +119,6 @@ export default function AuthScreen() {
         contentContainerStyle={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Mode toggle */}
         <View
           style={[
             styles.toggle,
@@ -136,7 +163,6 @@ export default function AuthScreen() {
           {isSignUp ? t("auth.subtitle.signUp") : t("auth.subtitle.signIn")}
         </Text>
 
-        {/* Google */}
         <TouchableOpacity
           onPress={handleGoogle}
           disabled={googleLoad}
@@ -154,7 +180,6 @@ export default function AuthScreen() {
           )}
         </TouchableOpacity>
 
-        {/* Divider */}
         <View style={styles.divider}>
           <View style={[styles.dividerLine, { backgroundColor: tc.border }]} />
           <Text style={[styles.dividerText, { color: tc.muted }]}>
@@ -163,7 +188,6 @@ export default function AuthScreen() {
           <View style={[styles.dividerLine, { backgroundColor: tc.border }]} />
         </View>
 
-        {/* Inputs */}
         <View style={styles.fields}>
           {isSignUp && (
             <TextInput
@@ -173,14 +197,7 @@ export default function AuthScreen() {
               placeholderTextColor={tc.muted}
               autoCapitalize="none"
               autoCorrect={false}
-              style={[
-                styles.input,
-                {
-                  borderColor: tc.border,
-                  color: tc.text,
-                  backgroundColor: tc.surface,
-                },
-              ]}
+              style={inputStyle}
             />
           )}
           <TextInput
@@ -191,14 +208,7 @@ export default function AuthScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
-            style={[
-              styles.input,
-              {
-                borderColor: tc.border,
-                color: tc.text,
-                backgroundColor: tc.surface,
-              },
-            ]}
+            style={inputStyle}
           />
           <TextInput
             value={password}
@@ -206,14 +216,7 @@ export default function AuthScreen() {
             placeholder={t("auth.fields.password")}
             placeholderTextColor={tc.muted}
             secureTextEntry
-            style={[
-              styles.input,
-              {
-                borderColor: tc.border,
-                color: tc.text,
-                backgroundColor: tc.surface,
-              },
-            ]}
+            style={inputStyle}
           />
           {isSignUp && (
             <TextInput
@@ -222,14 +225,7 @@ export default function AuthScreen() {
               placeholder={t("auth.fields.confirmPassword")}
               placeholderTextColor={tc.muted}
               secureTextEntry
-              style={[
-                styles.input,
-                {
-                  borderColor: tc.border,
-                  color: tc.text,
-                  backgroundColor: tc.surface,
-                },
-              ]}
+              style={inputStyle}
             />
           )}
         </View>

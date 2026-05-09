@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useRouter } from "expo-router";
 import { useProfileStore } from "@/store/use-profile-store";
-import { useTranslation } from "@/hooks/use-translation";
+import { resolveErr } from "@/lib/error-messages";
+import { t } from "@/lib/i18n";
 import {
   PasswordForm,
   validatePassword,
@@ -11,7 +12,6 @@ import {
 export default function SetPasswordScreen() {
   const router = useRouter();
   const { setPassword } = useProfileStore();
-  const { t } = useTranslation();
 
   const [password, setPasswordVal] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -34,12 +34,8 @@ export default function SetPasswordScreen() {
     try {
       await setPassword(password);
       router.back();
-    } catch (err: any) {
-      setError(
-        err.response?.data?.error ??
-          err.message ??
-          t("set-password.error-generic"),
-      );
+    } catch (err: unknown) {
+      setError(resolveErr(err));
     } finally {
       setSaving(false);
     }

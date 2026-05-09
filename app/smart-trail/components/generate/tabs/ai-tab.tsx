@@ -12,7 +12,7 @@ import {
 import { formStyles as styles } from "@/components/generate/form-styles";
 import { StopsList, type MustStop } from "@/components/generate/stops-list";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import type { ResolvedLocation } from "@/hooks/use-location-search";
 
 type Props = {
@@ -68,8 +68,6 @@ export function AiTab({
   onElevationChange,
   colors: c,
 }: Props) {
-  const { t } = useTranslation();
-
   return (
     <View style={styles.formSection}>
       <View style={[styles.subModeBar, { backgroundColor: c.surface, borderColor: c.border }]}>
@@ -106,7 +104,6 @@ export function AiTab({
             onClear={onClearStart}
             textColor={c.text}
             mutedColor={c.muted}
-            accent={c.tint}
           />
 
           <StopsList
@@ -130,7 +127,6 @@ export function AiTab({
                 onClear={onClearEnd}
                 textColor={c.text}
                 mutedColor={c.muted}
-                accent={c.tint}
               />
             </>
           )}

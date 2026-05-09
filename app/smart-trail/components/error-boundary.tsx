@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import i18n from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 
 interface Props {
   children: React.ReactNode;
@@ -15,8 +15,11 @@ export class ErrorBoundary extends React.Component<Props, State> {
   state: State = { hasError: false, message: "" };
 
   static getDerivedStateFromError(error: unknown): State {
+    // In production, hide raw error.message to avoid leaking internals.
     const message =
-      error instanceof Error ? error.message : i18n.t("common.unexpected-error");
+      __DEV__ && error instanceof Error
+        ? error.message
+        : t("common.unexpected-error");
     return { hasError: true, message };
   }
 
@@ -32,10 +35,10 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (this.state.hasError) {
       return (
         <View style={styles.container}>
-          <Text style={styles.title}>{i18n.t("common.something-went-wrong")}</Text>
+          <Text style={styles.title}>{t("common.something-went-wrong")}</Text>
           <Text style={styles.message}>{this.state.message}</Text>
           <TouchableOpacity style={styles.button} onPress={this.reset}>
-            <Text style={styles.buttonText}>{i18n.t("common.try-again")}</Text>
+            <Text style={styles.buttonText}>{t("common.try-again")}</Text>
           </TouchableOpacity>
         </View>
       );

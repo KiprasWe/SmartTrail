@@ -1,35 +1,47 @@
 // lib/ai/curate.js — Gemini tour-guide curation.
 //
 // Takes the assembled POI pool and asks Gemini to pick essential vs optional
-// stops, write a 1-2 sentence guide note for each, and respect the mode-
-// specific rules (named anchors always essential, no invented stops, etc).
-//
-// Mode-specific prompt context lives in buildModeCurationContext() — it was
-// previously in ai-routing-patch.js, now colocated with the caller.
+// stops and write a 1-2 sentence guide note for each.
 
 import { Type } from "@google/genai";
 import {
   genai,
   GEMINI_MODEL,
   LANG_INSTRUCTIONS,
+  ROUTE_SYSTEM_INSTRUCTION,
   sanitizePromptInput,
   extractJsonArray,
 } from "./shared.js";
+import { createAiTrace } from "./trace.js";
 
-// ─── Per-mode curation context ───────────────────────────────────────────────
+/** Model sometimes returns ors:23 instead of the full ors:… id (row-number confusion). */
+function resolveCuratePlaceId(rawId, pois, byId) {
+  if (!rawId || typeof rawId !== "string") return null;
+  const id = rawId.trim();
+  if (byId.has(id)) return id;
+  const m = id.match(/^ors:(\d+)$/i);
+  if (!m) return null;
+  const digits = m[1];
+  const n = parseInt(digits, 10);
+  if (!Number.isFinite(n) || n < 1 || n > pois.length) return null;
+  // Short numeric tail only — real OSM ids in this app are typically long.
+  if (digits.length > 6) return null;
+  const candidate = pois[n - 1]?.place_id;
+  return candidate && String(candidate) !== id ? candidate : null;
+}
 
-export function buildModeCurationContext(mode, namedPois, preferences) {
+function buildModeCurationContext(mode, namedPois, preferences) {
   switch (mode) {
     case "category":
       return {
         modeLabel: "OPEN TRAVEL GUIDE",
         modeInstructions: [
-          `OPEN TRAVEL GUIDE MODE — user wants: "${preferences || "best of the route"}"`,
+          `OPEN TRAVEL GUIDE MODE — user wants:\n<user_request>${preferences || "best in the trip region"}</user_request>`,
           `Act as a passionate local guide. Be generous — don't cap at some arbitrary number.`,
-          `If there are 8 great historic sites along the route, include all 8.`,
-          `essential=true: genuinely worth visiting, fits the theme, good detour candidate.`,
+          `If there are 8 great historic sites in the trip region, include all 8.`,
+          `essential=true: genuinely worth visiting, fits the theme, worth routing to.`,
           `essential=false: nice bonus if passing by.`,
-          `Spread essentials across the whole route. Tell a coherent story with the stops.`,
+          `Spread essentials across the trip region. Tell a coherent story with the stops.`,
         ],
       };
 
@@ -59,11 +71,11 @@ export function buildModeCurationContext(mode, namedPois, preferences) {
           anchorList,
           `These are guaranteed. Your job is ONLY to curate the category stops below.`,
           ``,
-          `User also wants: "${preferences}"`,
+          `User also wants:\n<user_request>${preferences}</user_request>`,
           ``,
           `RULES:`,
           `1. The committed stops above are already included — do not add them again.`,
-          `2. Be generous with category stops — if 6 great parks exist along the route, include all 6.`,
+          `2. Be generous with category stops — if 6 great parks exist in the trip region, include all 6.`,
           `3. essential=true for anything genuinely worth the detour for the requested theme.`,
           `4. essential=false for nice-to-have bonuses.`,
           `5. Do NOT artificially limit. Quality AND quantity both matter here.`,
@@ -76,8 +88,6 @@ export function buildModeCurationContext(mode, namedPois, preferences) {
   }
 }
 
-// ─── Curation schema + prompt ────────────────────────────────────────────────
-
 const CURATION_SCHEMA = {
   type: Type.ARRAY,
   items: {
@@ -85,17 +95,18 @@ const CURATION_SCHEMA = {
     properties: {
       place_id: {
         type: Type.STRING,
-        description: "Exact place_id from the input list.",
+        description:
+          "Copy the FULL place_id string from the input exactly (e.g. ors:8569856283). " +
+          "Never shorten, never invent, never use only digits after ors:. Must match one input line.",
       },
       guide_note: {
         type: Type.STRING,
         description:
-          "1-2 vivid sentences in a tour guide voice: why this stop is special.",
+          "For essential=true: 1-2 vivid sentences in a tour guide voice. For essential=false: empty string.",
       },
       essential: {
         type: Type.BOOLEAN,
-        description:
-          "true = must-visit stop affecting the route; false = nice-to-have.",
+        description: "true = must-visit stop affecting the route; false = nice-to-have.",
       },
     },
     required: ["place_id", "guide_note", "essential"],
@@ -103,67 +114,27 @@ const CURATION_SCHEMA = {
   },
 };
 
-function positionLabel(fraction) {
-  if (fraction < 0.33) return "[ROUTE START]";
-  if (fraction < 0.67) return "[MIDROUTE]";
-  return "[ROUTE END]";
-}
-
 function buildCurationPrompt({
-  pois,
-  profileLabel,
-  preferences,
-  placeStart,
-  placeEnd,
-  hasEnd,
-  distanceKm,
-  lang,
-  mode,
-  namedPois,
-  userNamedPlaceIds,
-  routePositions,
+  pois, profileLabel, preferences, placeStart, placeEnd,
+  hasEnd, distanceKm, lang, mode, namedPois, userNamedPlaceIds,
 }) {
   const langInstr = LANG_INSTRUCTIONS[lang] ?? LANG_INSTRUCTIONS.en;
   const tripDesc = hasEnd
     ? `${profileLabel} from "${placeStart || "start"}" to "${placeEnd || "destination"}" (~${Math.round(distanceKm)} km)`
     : `${profileLabel} round trip from "${placeStart || "start"}" (~${Math.round(distanceKm)} km)`;
 
+  // Do NOT prefix with [1], [2], … — models often confuse that index with place_id (e.g. ors:23).
   const poiList = pois
-    .map((p, i) => {
+    .map((p) => {
       const isNamed = userNamedPlaceIds?.has(p.place_id);
-      const isGapFill = p._gapFill && !isNamed;
-      const fraction = routePositions?.get(p.place_id);
-      const posTag = fraction != null ? ` ${positionLabel(fraction)}` : "";
-      const tag = isNamed
-        ? " ⚑ USER-REQUESTED — MUST be essential=true"
-        : isGapFill
-          ? " [GAP-FILL] travel guide suggestion"
-          : "";
+      const tag = isNamed ? " ⚑ USER-REQUESTED — MUST be essential=true" : "";
       return (
-        `[${i + 1}] place_id="${p.place_id}" | ${p.name} (${p.primary_type ?? "place"}) | ` +
+        `place_id=${p.place_id} | ${p.name} (${p.primary_type ?? "place"}) | ` +
         `${p.formatted_address ?? ""} | ${p.editorial_summary || p.description || ""}` +
-        posTag +
         tag
       );
     })
     .join("\n");
-
-  // Compute bucket sizes for the distribution rule
-  let distributionRule = "";
-  if (routePositions?.size) {
-    const fractions = [...routePositions.values()];
-    const startN = fractions.filter((f) => f < 0.33).length;
-    const midN = fractions.filter((f) => f >= 0.33 && f < 0.67).length;
-    const endN = fractions.filter((f) => f >= 0.67).length;
-    if (midN > 0) {
-      distributionRule = [
-        `ROUTE DISTRIBUTION: Pool has ${startN} stops near the start [ROUTE START], ` +
-          `${midN} midroute [MIDROUTE], ${endN} near the destination [ROUTE END].`,
-        `MANDATORY: Select AT LEAST 1 essential stop from [MIDROUTE] if any good ones exist there.`,
-        `Do NOT mark all essentials from [ROUTE END] only — spread them along the whole route.`,
-      ].join("\n");
-    }
-  }
 
   const { modeLabel, modeInstructions } = buildModeCurationContext(
     mode,
@@ -171,12 +142,14 @@ function buildCurationPrompt({
     sanitizePromptInput(preferences, 400),
   );
 
-  const maxStopsForDistance = Math.max(
-    2,
-    Math.min(Math.round(distanceKm / 4), 12),
+  const maxStopsForDistance = Math.min(
+    Math.max(3, Math.round(2 + Math.sqrt(distanceKm / 4))),
+    12,
   );
+
   return [
     `You are an expert local tour guide curating stops for this trip:`,
+    langInstr,
     `TRIP: ${tripDesc}`,
     `MODE: ${modeLabel}`,
     ``,
@@ -186,64 +159,52 @@ function buildCurationPrompt({
     poiList,
     ``,
     `CURATION TASK:`,
-    `Trip is ~${Math.round(distanceKm)} km. Budget: max ${maxStopsForDistance} ESSENTIAL stops total.`,
-    `Adding too many essential stops massively inflates the route distance — be selective.`,
-    `ESSENTIAL (essential=true): Stops that physically change the route. MAX ${maxStopsForDistance} total.`,
-    `  • Named/committed stops always essential`,
-    `  • Only the most unmissable category stops — prefer quality over quantity`,
-    `  • A 20km ride needs ~5 stops max, not 19`,
-    `OPTIONAL (essential=false): Shown on map, no detour. Be generous here instead.`,
+    `Trip is ~${Math.round(distanceKm)} km. Budget: max ${maxStopsForDistance} ESSENTIAL category stops.`,
+    `POIs are drawn from the full trip region — the route will be built to pass through whatever you mark essential.`,
+    `Each essential stop adds real detour distance — every extra essential km you add inflates the route.`,
+    `Prefer stops that are geographically spread along the trip direction rather than clustered in one area.`,
+    `ESSENTIAL (essential=true): Genuinely unmissable stops worth routing to. MAX ${maxStopsForDistance}.`,
+    `  • Only the absolute best stops for the theme — ruthlessly cut the rest`,
+    `  • Examples: 10 km → ~3-4 stops, 60 km → ~6 stops, 120 km → ~8 stops`,
+    `OPTIONAL (essential=false): Shown on map if passing by, zero route impact. Be generous here.`,
     `EXCLUDE: Car parks, petrol stations, supermarkets, hardware stores, irrelevant places.`,
-    distributionRule,
     ``,
-    `For EACH included place write a guide_note: 1-2 vivid tour-guide sentences.`,
-    `Return a JSON array ordered start → destination. Only use place_ids from the list above.`,
-    ``,
-    langInstr,
+    `GUIDE NOTES (resource-saving rule):`,
+    `- If essential=true → write a vivid 1-2 sentence guide_note.`,
+    `- If essential=false → set guide_note to an empty string "" (do NOT write a description).`,
+    `CRITICAL — place_id rules:`,
+    `- Each line starts with place_id=… Copy that ENTIRE token after the equals sign (full string).`,
+    `- Wrong: ors:23, ors:4, gmap:1 (too short / looks like a line number).`,
+    `- Right: ors:8569856283 (same as in the list).`,
+    `Return a JSON array ordered start → destination. Every place_id MUST appear verbatim in the list above.`,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
 export async function tourGuideCurate({
-  pois,
-  profileLabel,
-  preferences,
-  placeStart,
-  placeEnd,
-  hasEnd,
-  distanceKm,
-  lang,
-  mode,
-  namedPois,
-  userNamedPlaceIds,
-  routePositions,
+  pois, profileLabel, preferences, placeStart, placeEnd,
+  hasEnd, distanceKm, lang, mode, namedPois, userNamedPlaceIds,
+  trace,
 }) {
   if (!genai || !pois.length) return null;
 
+  const t = trace ?? createAiTrace({ enabled: false });
   const prompt = buildCurationPrompt({
-    pois,
-    profileLabel,
-    preferences,
-    placeStart,
-    placeEnd,
-    hasEnd,
-    distanceKm,
-    lang,
-    mode,
-    namedPois,
-    userNamedPlaceIds,
-    routePositions,
+    pois, profileLabel, preferences, placeStart, placeEnd,
+    hasEnd, distanceKm, lang, mode, namedPois, userNamedPlaceIds,
   });
 
   try {
+    const temperature = distanceKm < 20 ? 0.5 : distanceKm < 60 ? 0.4 : 0.3;
     const r = await genai.models.generateContent({
       model: GEMINI_MODEL,
       contents: prompt,
       config: {
+        systemInstruction: ROUTE_SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseJsonSchema: CURATION_SCHEMA,
-        temperature: 0.55,
+        temperature,
       },
     });
 
@@ -255,51 +216,106 @@ export async function tourGuideCurate({
     }
 
     if (!Array.isArray(parsed) || !parsed.length) {
-      console.warn("[aiRouting] Curation returned empty");
+      console.warn("[curate] Curation returned empty");
+      t.summary("curation_empty", { input_count: pois.length, mode, distanceKm });
       return null;
     }
 
     const byId = new Map(pois.map((p) => [p.place_id, p]));
-    const curated = parsed
-      .filter((item) => item?.place_id && byId.has(item.place_id))
-      .map((item) => ({
-        ...byId.get(item.place_id),
-        guide_note: String(item.guide_note ?? "").trim(),
-        essential: userNamedPlaceIds?.has(item.place_id)
-          ? true
-          : Boolean(item.essential),
-      }));
+    const rawIds = parsed.map((x) => x?.place_id).filter(Boolean);
+    const unknownIds = rawIds.filter((id) => !byId.has(id)).slice(0, 50);
 
-    // Safety net: re-inject any user-named POI curation silently dropped
+    const curated = [];
+    const seen = new Set();
+    for (const item of parsed) {
+      const raw = typeof item?.place_id === "string" ? item.place_id.trim() : "";
+      const resolvedId = raw && byId.has(raw) ? raw : resolveCuratePlaceId(raw, pois, byId);
+      if (!resolvedId || !byId.has(resolvedId) || seen.has(resolvedId)) continue;
+      seen.add(resolvedId);
+      const essential = userNamedPlaceIds?.has(resolvedId) ? true : Boolean(item.essential);
+      const note = String(item.guide_note ?? "").trim();
+      curated.push({
+        ...byId.get(resolvedId),
+        guide_note: essential ? note : null,
+        essential,
+      });
+    }
+
+    const rawLen = parsed.length;
+    const minKept = Math.max(3, Math.floor(rawLen * 0.25));
+    if (rawLen >= 8 && curated.length < minKept) {
+      console.warn(
+        `[curate] Discarding curation: only ${curated.length}/${rawLen} place_ids matched (likely model typos). Using fallback.`,
+      );
+      t.summary("curation_discarded_low_match", {
+        mode,
+        input_count: pois.length,
+        model_output_count: rawLen,
+        kept_count: curated.length,
+        min_expected: minKept,
+        unknown_place_ids_sample: unknownIds.slice(0, 20),
+      });
+      return null;
+    }
+    if (rawLen >= 5 && curated.length === 0) {
+      t.summary("curation_discarded_zero_match", {
+        mode,
+        input_count: pois.length,
+        model_output_count: rawLen,
+        unknown_place_ids_sample: unknownIds.slice(0, 20),
+      });
+      return null;
+    }
+
+    // Safety net: re-inject any user-named POI Gemini silently dropped
     if (userNamedPlaceIds?.size) {
       for (const placeId of userNamedPlaceIds) {
         if (!curated.some((p) => p.place_id === placeId) && byId.has(placeId)) {
           const poi = byId.get(placeId);
-          curated.push({
-            ...poi,
-            guide_note: poi.guide_note ?? poi.editorial_summary ?? "",
-            essential: true,
-          });
-          console.log(`[aiRouting] Safety net: re-injected "${poi.name}"`);
+          curated.push({ ...poi, guide_note: poi.guide_note ?? poi.editorial_summary ?? "", essential: true });
+          console.log(`[curate] Safety net: re-injected "${poi.name}"`);
+          t.poiDecision("curation_reinject", poi, { reason: "user_named_dropped_by_model" });
         }
       }
     }
 
     const essential = curated.filter((p) => p.essential).length;
+    const droppedInputIds = pois
+      .map((p) => p.place_id)
+      .filter((id) => id && !curated.some((c) => c.place_id === id))
+      .slice(0, 80);
+
+    t.summary("curation_result", {
+      mode,
+      distanceKm,
+      input_count: pois.length,
+      model_output_count: Array.isArray(parsed) ? parsed.length : 0,
+      kept_count: curated.length,
+      essential_count: essential,
+      optional_count: curated.length - essential,
+      unknown_place_ids_from_model: unknownIds.length ? unknownIds : null,
+      dropped_input_place_ids_sample: droppedInputIds.length ? droppedInputIds : null,
+    });
     console.log(
-      `[aiRouting] Curated ${curated.length} stops (${essential} essential, ${curated.length - essential} optional) [mode=${mode}]:\n` +
+      `[curate] ${curated.length} stops (${essential} essential, ${curated.length - essential} optional) [mode=${mode}]:\n` +
         curated
-          .map(
-            (p) =>
-              `  ${p.essential ? "★" : "○"} ${p.name}` +
-              `${p._userNamed ? " [ANCHOR]" : p._gapFill ? " [GAP-FILL]" : ""} — "${p.guide_note?.slice(0, 80)}..."`,
-          )
+          .map((p) => {
+            const note = p.guide_note?.trim();
+            const tail = note ? `"${note.slice(0, 80)}${note.length > 80 ? "…" : ""}"` : "—";
+            return `  ${p.essential ? "★" : "○"} ${p.name} — ${tail}`;
+          })
           .join("\n"),
     );
 
     return curated.length ? curated : null;
   } catch (err) {
-    console.warn("[aiRouting] Curation failed:", err.message);
+    console.warn("[curate] Curation failed:", err.message);
+    (trace ?? createAiTrace({ enabled: false })).summary("curation_error", {
+      mode,
+      distanceKm,
+      input_count: pois.length,
+      error: err.message,
+    });
     return null;
   }
 }

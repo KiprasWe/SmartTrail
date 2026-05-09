@@ -1,42 +1,12 @@
 // lib/ai/waypoints.js — waypoint shaping helpers used by the pipeline.
 //
-//   snapToSkeleton      — pull a POI onto the nearest skeleton point if close
-//   sortPoisAlongLine   — project POIs onto start→end line for A→B ordering
-//   sortPoisAroundLoop  — greedy nearest-neighbour ordering for loops
+//   sortPoisAlongLine    — project POIs onto start→end line for A→B ordering
+//   sortPoisAroundLoop   — greedy nearest-neighbour ordering for loops
 //   enrichedPoiToFeature — convert internal POI to GeoJSON feature for client
-//   fetchORSWithFallback — call ORS directions, drop unroutable waypoints
-//                          one at a time instead of failing the whole request
+//   fetchORSWithFallback — ORS directions with per-waypoint dropout fallback
 
 import { haversineM } from "../geo.js";
 import { fetchORSDirections } from "../ors.js";
-
-// ─── Snap ─────────────────────────────────────────────────────────────────────
-
-const SNAP_THRESHOLD_M = {
-  "foot-walking": 150,
-  "foot-hiking": 200,
-  running: 100,
-  "cycling-regular": 250,
-  "cycling-road": 350,
-  "cycling-mountain": 300,
-  "cycling-electric": 280,
-};
-
-export function snapToSkeleton(coord, skeletonCoords, profile) {
-  const threshold = SNAP_THRESHOLD_M[profile] ?? 200;
-  let bestDist = Infinity;
-  let bestCoord = null;
-  for (const sk of skeletonCoords) {
-    const d = haversineM(coord, sk);
-    if (d < bestDist) {
-      bestDist = d;
-      bestCoord = sk;
-    }
-  }
-  return bestCoord && bestDist <= threshold ? bestCoord : coord;
-}
-
-// ─── Ordering ─────────────────────────────────────────────────────────────────
 
 export function sortPoisAlongLine(pois, start, end) {
   const [sx, sy] = start;
@@ -58,10 +28,7 @@ export function sortPoisAroundLoop(pois, start) {
     let bestIdx = 0,
       bestDist = Infinity;
     for (let i = 0; i < remaining.length; i++) {
-      const d = haversineM(
-        [curLng, curLat],
-        [remaining[i].lng, remaining[i].lat],
-      );
+      const d = haversineM([curLng, curLat], [remaining[i].lng, remaining[i].lat]);
       if (d < bestDist) {
         bestDist = d;
         bestIdx = i;
@@ -75,8 +42,6 @@ export function sortPoisAroundLoop(pois, start) {
   return sorted;
 }
 
-// ─── Feature output ──────────────────────────────────────────────────────────
-
 export function enrichedPoiToFeature(poi, i) {
   return {
     type: "Feature",
@@ -87,8 +52,7 @@ export function enrichedPoiToFeature(poi, i) {
       category: poi.primary_type ?? poi.types?.[0] ?? null,
       distance_from_route: 0,
       guide_note: poi.guide_note ?? null,
-      ai_description:
-        poi.guide_note ?? poi.editorial_summary ?? poi.description ?? null,
+      ai_description: poi.guide_note ?? poi.editorial_summary ?? poi.description ?? null,
       essential: poi.essential ?? false,
       rating: poi.rating,
       user_rating_count: poi.user_rating_count,
@@ -99,15 +63,13 @@ export function enrichedPoiToFeature(poi, i) {
       photo_name: poi.photo_name,
       place_id: poi.place_id,
       user_named: poi._userNamed ?? false,
-      gap_fill: poi._gapFill ?? false,
     },
   };
 }
 
-// ─── ORS routing with waypoint fallback ──────────────────────────────────────
-// If ORS rejects a waypoint as unroutable (error mentions "coordinate N"), drop
-// that waypoint and retry. protectedCount prevents dropping user/named anchors.
-
+// ORS directions with per-waypoint dropout fallback.
+// If ORS rejects a waypoint as unroutable, drops it and retries.
+// protectedCount prevents dropping user/named anchors.
 export async function fetchORSWithFallback(
   orsProfile,
   startCoord,
@@ -135,11 +97,8 @@ export async function fetchORSWithFallback(
       if (!match) throw err;
       const absIdx = parseInt(match[1], 10);
       const wpIdx = absIdx - 1;
-      if (wpIdx < 0 || wpIdx >= waypoints.length || wpIdx < protectedCount)
-        throw err;
-      console.warn(
-        `[aiRouting] ORS 2010: dropping unroutable waypoint at position ${absIdx}`,
-      );
+      if (wpIdx < 0 || wpIdx >= waypoints.length || wpIdx < protectedCount) throw err;
+      console.warn(`[aiRouting] ORS 2010: dropping unroutable waypoint at position ${absIdx}`);
       waypoints = waypoints.filter((_, i) => i !== wpIdx);
       if (!waypoints.length) throw err;
     }

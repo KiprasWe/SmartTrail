@@ -72,7 +72,7 @@ model Route {
   ascent       Int?
   descent      Int?
 
-  geometry     Json
+  geometry     Unsupported("geometry(LineString, 4326)")
   bbox         Json
   elevationProfile Json?
   pois         Json?

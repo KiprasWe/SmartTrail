@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { getErrMessage } from "@/lib/error-messages";
+import { resolveErr } from "@/lib/error-messages";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ export function useLocationSearch() {
           const data = await res.json();
           setResults(parseFeatures(data.features ?? []));
         } catch (e: unknown) {
-          setError(getErrMessage(e));
+          setError(resolveErr(e));
           setResults([]);
         } finally {
           setLoading(false);

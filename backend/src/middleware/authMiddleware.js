@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { prisma } from "../config/db.js";
+import { sendError, Errors } from "../utils/responses.js";
 
 export const authMiddleware = async (req, res, next) => {
   let token;
@@ -14,7 +15,7 @@ export const authMiddleware = async (req, res, next) => {
   }
 
   if (!token) {
-    return res.status(401).json({ error: "Not authorized." });
+    return sendError(res, Errors.NOT_AUTHORIZED);
   }
 
   try {
@@ -22,12 +23,12 @@ export const authMiddleware = async (req, res, next) => {
     const user = await prisma.user.findUnique({ where: { id: decoded.id } });
 
     if (!user) {
-      return res.status(401).json({ error: "User no longer exists." });
+      return sendError(res, Errors.USER_NOT_FOUND);
     }
 
     req.user = user;
     next();
   } catch (err) {
-    return res.status(401).json({ error: "Not authorized." });
+    return sendError(res, Errors.NOT_AUTHORIZED);
   }
 };

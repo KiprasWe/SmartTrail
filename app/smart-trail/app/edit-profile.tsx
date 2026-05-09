@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import {
   View,
   Text,
-  Image,
   TextInput,
   TouchableOpacity,
   ScrollView,
@@ -16,18 +15,18 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useProfileStore } from "@/store/use-profile-store";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
+import { resolveErr } from "@/lib/error-messages";
 import { ScreenHeader } from "@/components/ui/screen-header";
 
 const BIO_MAX = 160;
 
 export default function EditProfileScreen() {
   const router = useRouter();
-  const { profile, updateProfile, setProfile } = useProfileStore();
+  const { profile, updateProfile } = useProfileStore();
   const scheme = useColorScheme() ?? "light";
   const isDark = scheme === "dark";
   const ts = Colors[scheme];
-  const { t } = useTranslation();
 
   const [username, setUsername] = useState("");
   const [bio, setBio] = useState("");
@@ -38,6 +37,9 @@ export default function EditProfileScreen() {
       setUsername(profile.username ?? "");
       setBio(profile.bio ?? "");
     }
+    // We only want to re-seed inputs when the underlying user id changes,
+    // not when their username/bio mutate from elsewhere mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id]);
 
   const handleSave = async () => {
@@ -53,15 +55,11 @@ export default function EditProfileScreen() {
       if (bio !== (profile?.bio ?? "")) patch.bio = bio;
 
       if (Object.keys(patch).length > 0) {
-        const updated = await updateProfile(patch);
-        setProfile(updated);
+        await updateProfile(patch);
       }
       router.back();
-    } catch (err: any) {
-      Alert.alert(
-        t("common.error"),
-        err.response?.data?.error ?? err.message ?? "Failed to save.",
-      );
+    } catch (err: unknown) {
+      Alert.alert(t("common.error"), resolveErr(err));
     } finally {
       setSaving(false);
     }
@@ -101,7 +99,6 @@ export default function EditProfileScreen() {
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={styles.scroll}
       >
-        {/* Profile fields */}
         <Text style={[styles.sectionLabel, { color: ts.muted }]}>
           {t("edit-profile.section-profile").toUpperCase()}
         </Text>
@@ -111,7 +108,6 @@ export default function EditProfileScreen() {
             { backgroundColor: ts.surface, borderColor: ts.border },
           ]}
         >
-          {/* Username */}
           <View style={styles.inputRow}>
             <Ionicons name="person" size={15} color={ts.muted} />
             <TextInput
@@ -127,7 +123,6 @@ export default function EditProfileScreen() {
 
           <View style={[styles.rowDivider, { backgroundColor: ts.border }]} />
 
-          {/* Bio */}
           <View style={[styles.inputRow, styles.bioRow]}>
             <TextInput
               value={bio}
@@ -150,7 +145,6 @@ export default function EditProfileScreen() {
           </View>
         </View>
 
-        {/* Email — read-only */}
         {profile?.email ? (
           <>
             <Text style={[styles.sectionLabel, { color: ts.muted }]}>
@@ -205,17 +199,6 @@ const styles = StyleSheet.create({
   saveChipLabel: { color: "#fff", fontSize: 13, fontWeight: "700" },
 
   scroll: { paddingTop: 28, paddingHorizontal: 20, paddingBottom: 48 },
-
-  avatarWrap: {
-    alignSelf: "center",
-    marginBottom: 32,
-  },
-  avatar: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    borderWidth: 1,
-  },
 
   sectionLabel: {
     fontSize: 11,

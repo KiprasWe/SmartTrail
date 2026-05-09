@@ -68,7 +68,17 @@
       "Bash(find \"/c/Users/kipra/Desktop/New folder/SmartTrail/app/smart-trail\" -type f \\\\\\( -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.js\" -o -name \"*.jsx\" \\\\\\) ! -path \"*/node_modules/*\" ! -path \"*/.cxx/*\" ! -path \"*/.expo/*\" ! -path \"*/android/*\" ! -path \"*/ios/*\" ! -path \"*/build/*\" ! -path \"*/dist/*\" -exec wc -l {} +)",
       "Bash(sort -k2)",
       "Bash(find . -type f \\\\\\( -name \"*.tsx\" -o -name \"*.ts\" \\\\\\) ! -path \"*/node_modules/*\" ! -path \"*/.cxx/*\" ! -path \"*/.expo/*\" ! -path \"*/android/*\" ! -path \"*/ios/*\" ! -path \"*/build/*\" ! -path \"*/dist/*\" -exec grep -l \"TODO\\\\|FIXME\\\\|console\\\\.\" {} \\\\;)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(Get-ChildItem *)",
+      "Bash(Select-Object FullName)",
+      "Bash(Select-Object Name)",
+      "Bash(xargs wc -l)",
+      "Bash(xargs ls -la)",
+      "Bash(Remove-Item *)",
+      "PowerShell(New-Item *)",
+      "Bash(Select-String -Pattern \"\\(constant|config|category\\)\" -List)",
+      "Bash(dir \"C:\\\\Users\\\\kipra\\\\Desktop\\\\New folder\\\\SmartTrail\\\\backend\\\\src\" -Recurse -Filter \"*.js\")",
+      "Bash(Select-Object -First 30)"
     ]
   },
   "enabledPlugins": {

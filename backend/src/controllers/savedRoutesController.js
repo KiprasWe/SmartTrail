@@ -1,10 +1,9 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { sendError, sendSuccess, Errors, Success } from "../utils/responses.js";
 import { prisma } from "../config/db.js";
+import { Prisma } from "@prisma/client";
 import { simplifyForThumbnail } from "../lib/geo.js";
-import { fetchWithTimeout } from "../utils/http.js";
 
-const TIMEOUT_PLACES_MS = 15_000;
 const SAVED_ROUTE_LIST_SELECT = {
   id: true,
   title: true,
@@ -14,7 +13,6 @@ const SAVED_ROUTE_LIST_SELECT = {
   duration: true,
   ascent: true,
   descent: true,
-  geometry: true,
   bbox: true,
   createdAt: true,
   updatedAt: true,
@@ -24,22 +22,27 @@ export const saveRoute = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const data = req.body;
 
-  const route = await prisma.route.create({
-    data: {
-      userId,
-      title: data.title,
-      description: data.description ?? null,
-      transport: data.transport,
-      distance: data.distance,
-      duration: data.duration,
-      ascent: data.ascent ?? null,
-      descent: data.descent ?? null,
-      geometry: data.geometry,
-      bbox: data.bbox,
-      elevationProfile: data.elevationProfile ?? null,
-      pois: data.pois ?? null,
-    },
-  });
+  const [route] = await prisma.$queryRaw`
+    INSERT INTO "Route" (id, "userId", title, description, transport, distance, duration, ascent, descent, geometry, bbox, "elevationProfile", pois, "createdAt", "updatedAt")
+    VALUES (
+      gen_random_uuid(),
+      ${userId},
+      ${data.title},
+      ${data.description ?? null},
+      ${data.transport},
+      ${data.distance}::integer,
+      ${data.duration}::integer,
+      ${data.ascent ?? null}::integer,
+      ${data.descent ?? null}::integer,
+      ST_GeomFromGeoJSON(${JSON.stringify(data.geometry)}),
+      ${JSON.stringify(data.bbox)}::jsonb,
+      ${data.elevationProfile ? JSON.stringify(data.elevationProfile) : null}::jsonb,
+      ${data.pois ? JSON.stringify(data.pois) : null}::jsonb,
+      NOW(),
+      NOW()
+    )
+    RETURNING id, "userId", title, description, transport, distance, duration, ascent, descent, bbox, "elevationProfile", pois, "createdAt", "updatedAt"
+  `;
 
   return sendSuccess(res, Success.ROUTE_SAVED, { route });
 });
@@ -61,10 +64,19 @@ export const listSavedRoutes = asyncHandler(async (req, res) => {
   const page = hasMore ? rows.slice(0, limit) : rows;
   const nextCursor = hasMore ? page[page.length - 1].id : null;
 
-  const routes = page.map(({ geometry, ...rest }) => ({
-    ...rest,
-    thumbnail: simplifyForThumbnail(geometry),
-  }));
+  let thumbnailMap = new Map();
+  if (page.length > 0) {
+    const thumbnailRows = await prisma.$queryRaw`
+      SELECT id, ST_AsGeoJSON(geometry)::json as geometry
+      FROM "Route"
+      WHERE id IN (${Prisma.join(page.map((r) => r.id))})
+    `;
+    for (const row of thumbnailRows) {
+      thumbnailMap.set(row.id, simplifyForThumbnail(row.geometry));
+    }
+  }
+
+  const routes = page.map((r) => ({ ...r, thumbnail: thumbnailMap.get(r.id) ?? null }));
   return sendSuccess(res, Success.ROUTES_FETCHED, { routes, nextCursor });
 });
 
@@ -72,11 +84,16 @@ export const getSavedRoute = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { id } = req.params;
 
-  const route = await prisma.route.findUnique({ where: { id } });
+  const [route] = await prisma.$queryRaw`
+    SELECT id, "userId", title, description, transport, distance, duration, ascent, descent,
+           ST_AsGeoJSON(geometry)::json as geometry,
+           bbox, "elevationProfile", pois, "createdAt", "updatedAt"
+    FROM "Route"
+    WHERE id = ${id}
+  `;
+
   if (!route) return sendError(res, Errors.ROUTE_NOT_FOUND);
-  if (route.userId !== userId) {
-    return sendError(res, Errors.ROUTE_ACCESS_DENIED);
-  }
+  if (route.userId !== userId) return sendError(res, Errors.ROUTE_ACCESS_DENIED);
 
   return sendSuccess(res, Success.ROUTE_FETCHED, { route });
 });
@@ -87,9 +104,7 @@ export const updateSavedRoute = asyncHandler(async (req, res) => {
 
   const existing = await prisma.route.findUnique({ where: { id } });
   if (!existing) return sendError(res, Errors.ROUTE_NOT_FOUND);
-  if (existing.userId !== userId) {
-    return sendError(res, Errors.ROUTE_ACCESS_DENIED);
-  }
+  if (existing.userId !== userId) return sendError(res, Errors.ROUTE_ACCESS_DENIED);
 
   const route = await prisma.route.update({
     where: { id },
@@ -105,9 +120,7 @@ export const deleteSavedRoute = asyncHandler(async (req, res) => {
 
   const existing = await prisma.route.findUnique({ where: { id } });
   if (!existing) return sendError(res, Errors.ROUTE_NOT_FOUND);
-  if (existing.userId !== userId) {
-    return sendError(res, Errors.ROUTE_ACCESS_DENIED);
-  }
+  if (existing.userId !== userId) return sendError(res, Errors.ROUTE_ACCESS_DENIED);
 
   await prisma.route.delete({ where: { id } });
   return sendSuccess(res, Success.ROUTE_DELETED, { id });

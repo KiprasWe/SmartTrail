@@ -2,8 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   atoBSchema,
   loopSchema,
-  loopPoiSuggestSchema,
-  addPoiSchema,
   aiRouteSchema,
   saveRouteSchema,
   updateRouteSchema,
@@ -22,7 +20,7 @@ describe("atoBSchema", () => {
   it("applies defaults", () => {
     const { data } = atoBSchema.safeParse(valid);
     expect(data.profile).toBe("foot-walking");
-    expect(data.elevationPreference).toBe("auto");
+    expect(data.elevationPreference).toBe("moderate");
     expect(data.poiCount).toBe(0);
     expect(data.poiTypes).toEqual([]);
     expect(data.waypoints).toEqual([]);
@@ -87,16 +85,16 @@ describe("loopSchema", () => {
     );
   });
 
-  it("rejects distance above 100000", () => {
-    expect(loopSchema.safeParse({ ...valid, distance: 100_001 }).success).toBe(
-      false,
-    );
+  it("rejects distance above 6000000", () => {
+    expect(
+      loopSchema.safeParse({ ...valid, distance: 6_000_001 }).success,
+    ).toBe(false);
   });
 
-  it("accepts distance at exactly 100000", () => {
-    expect(loopSchema.safeParse({ ...valid, distance: 100_000 }).success).toBe(
-      true,
-    );
+  it("accepts distance at exactly 6000000", () => {
+    expect(
+      loopSchema.safeParse({ ...valid, distance: 6_000_000 }).success,
+    ).toBe(true);
   });
 
   it("accepts optional controlPoints", () => {
@@ -106,61 +104,6 @@ describe("loopSchema", () => {
         controlPoints: [[25.28, 54.69], [25.27, 54.70]],
       }).success,
     ).toBe(true);
-  });
-});
-
-describe("loopPoiSuggestSchema", () => {
-  const valid = { routeCoords: [vilnius, kaunas] };
-
-  it("accepts minimal valid data", () => {
-    expect(loopPoiSuggestSchema.safeParse(valid).success).toBe(true);
-  });
-
-  it("applies defaults for poiTypes and max", () => {
-    const { data } = loopPoiSuggestSchema.safeParse(valid);
-    expect(data.poiTypes).toEqual(["nature", "tourism", "historic"]);
-    expect(data.max).toBe(15);
-  });
-
-  it("rejects routeCoords with fewer than 2 points", () => {
-    expect(
-      loopPoiSuggestSchema.safeParse({ routeCoords: [vilnius] }).success,
-    ).toBe(false);
-  });
-
-  it("rejects max above 30", () => {
-    expect(loopPoiSuggestSchema.safeParse({ ...valid, max: 31 }).success).toBe(
-      false,
-    );
-  });
-
-  it("rejects max below 1", () => {
-    expect(loopPoiSuggestSchema.safeParse({ ...valid, max: 0 }).success).toBe(
-      false,
-    );
-  });
-});
-
-describe("addPoiSchema", () => {
-  const valid = {
-    poi: vilnius,
-    legs: [{ from: vilnius, to: kaunas }],
-    profile: "foot-walking",
-  };
-
-  it("accepts valid data", () => {
-    expect(addPoiSchema.safeParse(valid).success).toBe(true);
-  });
-
-  it("rejects empty legs array", () => {
-    expect(addPoiSchema.safeParse({ ...valid, legs: [] }).success).toBe(false);
-  });
-
-  it("rejects missing poi", () => {
-    expect(
-      addPoiSchema.safeParse({ legs: valid.legs, profile: valid.profile })
-        .success,
-    ).toBe(false);
   });
 });
 
@@ -229,14 +172,11 @@ describe("saveRouteSchema", () => {
   };
   const valid = {
     title: "My Route",
-    mode: "A_TO_B",
     transport: "foot-walking",
     distance: 5000,
     duration: 3600,
     geometry: validGeom,
     bbox: [23, 54, 26, 55],
-    startLat: 54.687,
-    startLng: 25.279,
   };
 
   it("accepts valid route data", () => {
@@ -253,18 +193,6 @@ describe("saveRouteSchema", () => {
     expect(
       saveRouteSchema.safeParse({ ...valid, title: "a".repeat(101) }).success,
     ).toBe(false);
-  });
-
-  it("rejects invalid mode", () => {
-    expect(
-      saveRouteSchema.safeParse({ ...valid, mode: "INVALID" }).success,
-    ).toBe(false);
-  });
-
-  it("accepts all three modes", () => {
-    for (const mode of ["A_TO_B", "LOOP", "AI"]) {
-      expect(saveRouteSchema.safeParse({ ...valid, mode }).success).toBe(true);
-    }
   });
 
   it("rejects non-positive distance", () => {

@@ -3,7 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LocationRow } from "./route-form-components";
 import { formStyles as styles } from "./form-styles";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import type { ResolvedLocation } from "@/hooks/use-location-search";
 
 export type MustStop = {
@@ -32,8 +32,6 @@ export function StopsList({
   colors: c,
   embedded = false,
 }: Props) {
-  const { t } = useTranslation();
-
   const rows = (
     <>
       {stops.map((stop, i) => (
@@ -55,7 +53,6 @@ export function StopsList({
             showHandle
             textColor={c.text}
             mutedColor={c.muted}
-            accent={c.tint}
           />
         </View>
       ))}

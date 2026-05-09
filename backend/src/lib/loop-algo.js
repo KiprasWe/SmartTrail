@@ -1,24 +1,19 @@
-import { haversineM } from "./geo.js";
 import {
-  fetchElevations,
-  fetchAreaPOIs,
   fetchORSDirections,
   orsFeatureToRouteData,
 } from "./ors.js";
 import { solveTspLoop } from "./loop-tsp.js";
 
-const TAIL_FRACTION = 0.2;
-
-const DISTANCE_TOLERANCE = 0.12;
-
-const MAX_SCALE_PASSES = 4;
-
-const MAX_CLEAN_ITERATIONS = 8;
-
-export { fetchAreaPOIs };
+const DISTANCE_TOLERANCE = 0.07;
+const MAX_SCALE_PASSES = 6;
+const SCALE_DAMPING = 0.8; // exponent < 1 prevents oscillation
+const MAX_TAIL_CLEAN_PASSES = 5;
+const TAIL_SIZE_THRESHOLD = 0.2; // sections < 20% of total route are treated as tails
 
 function latLngDistKm(a, b) {
-  return haversineM([a.lng, a.lat], [b.lng, b.lat]) / 1000;
+  const dLat = (a.lat - b.lat) * 110.54;
+  const dLng = (a.lng - b.lng) * 111.32 * Math.cos((a.lat * Math.PI) / 180);
+  return Math.sqrt(dLat * dLat + dLng * dLng);
 }
 
 function toLngLat([lng, lat]) {
@@ -31,7 +26,7 @@ function toORS({ lat, lng }) {
 
 function circleRoute(base, lengthM, travelHeading, rotation) {
   const radius = lengthM / (2 * Math.PI);
-  const circlePoints = 4;
+  const circlePoints = 6;
   const deg = [];
   const rlPoints = [];
 
@@ -75,247 +70,291 @@ function circleRoute(base, lengthM, travelHeading, rotation) {
   return rlPoints;
 }
 
-function rectangleRoute(base, lengthM, travelHeading, rotation) {
-  const rlPoints = [];
-  const maxRatio = 5;
-  const minRatio = 1 / maxRatio;
-  const ratio = Math.random() * (maxRatio - minRatio) + minRatio;
-  const width = lengthM / (2 * ratio + 2);
-  const height = width * ratio;
-  const diagonal = Math.sqrt(width * width + height * height);
-  const theta = Math.acos(height / diagonal);
-
-  let direction = Math.random() * 2 * Math.PI;
-  if (travelHeading === 1)
-    direction = (Math.random() * Math.PI) / 4 + (3 * Math.PI) / 8;
-  else if (travelHeading === 2)
-    direction = (Math.random() * Math.PI) / 4 + (1 * Math.PI) / 8;
-  else if (travelHeading === 3)
-    direction = (Math.random() * Math.PI) / 4 - Math.PI / 8;
-  else if (travelHeading === 4)
-    direction = (Math.random() * Math.PI) / 4 + (13 * Math.PI) / 8;
-  else if (travelHeading === 5)
-    direction = (Math.random() * Math.PI) / 4 + (11 * Math.PI) / 8;
-  else if (travelHeading === 6)
-    direction = (Math.random() * Math.PI) / 4 + (9 * Math.PI) / 8;
-  else if (travelHeading === 7)
-    direction = (Math.random() * Math.PI) / 4 + (7 * Math.PI) / 8;
-  else if (travelHeading === 8)
-    direction = (Math.random() * Math.PI) / 4 + (5 * Math.PI) / 8;
-
-  const sign = rotation === "clockwise" ? -1 : 1;
-  const cosLat = Math.cos((base.lat * Math.PI) / 180);
-
-  const pushPoint = (angle, dist) => {
-    const dx = dist * Math.cos(angle);
-    const dy = dist * Math.sin(angle);
-    rlPoints.push({
-      lat: base.lat + dy / 110540,
-      lng: base.lng + dx / (111320 * cosLat),
-    });
-  };
-
-  pushPoint(direction, height);
-  pushPoint(sign * theta + direction, diagonal);
-  pushPoint((sign * Math.PI) / 2 + direction, width);
-
-  return rlPoints;
-}
-
-function fig8Route(base, lengthM, travelHeading, rotation) {
-  const radius = lengthM / 4 / Math.PI;
-  const circlePoints = 3;
-  const rlPoints = [];
-
-  let direction = Math.random() * 2 * Math.PI;
-  if (travelHeading === 1)
-    direction = (Math.random() * Math.PI) / 4 + (3 * Math.PI) / 8;
-  else if (travelHeading === 2)
-    direction = (Math.random() * Math.PI) / 4 + (1 * Math.PI) / 8;
-  else if (travelHeading === 3)
-    direction = (Math.random() * Math.PI) / 4 - Math.PI / 8;
-  else if (travelHeading === 4)
-    direction = (Math.random() * Math.PI) / 4 + (13 * Math.PI) / 8;
-  else if (travelHeading === 5)
-    direction = (Math.random() * Math.PI) / 4 + (11 * Math.PI) / 8;
-  else if (travelHeading === 6)
-    direction = (Math.random() * Math.PI) / 4 + (9 * Math.PI) / 8;
-  else if (travelHeading === 7)
-    direction = (Math.random() * Math.PI) / 4 + (7 * Math.PI) / 8;
-  else if (travelHeading === 8)
-    direction = (Math.random() * Math.PI) / 4 + (5 * Math.PI) / 8;
-
-  const buildLobe = (lobeDir, sign) => {
-    const cosLat = Math.cos((base.lat * Math.PI) / 180);
-    const dx0 = radius * Math.cos(lobeDir);
-    const dy0 = radius * Math.sin(lobeDir);
-    const center = {
-      lat: base.lat + dy0 / 110540,
-      lng: base.lng + dx0 / (111320 * cosLat),
-    };
-    const deg = [lobeDir + Math.PI];
-    for (let i = 1; i < circlePoints + 1; i++) {
-      deg.push(deg[i - 1] + (sign * 2 * Math.PI) / (circlePoints + 1));
-      const dx = radius * Math.cos(deg[i]);
-      const dy = radius * Math.sin(deg[i]);
-      rlPoints.push({
-        lat: center.lat + dy / 110540,
-        lng:
-          center.lng + dx / (111320 * Math.cos((center.lat * Math.PI) / 180)),
-      });
-    }
-  };
-
-  const sign1 = rotation === "clockwise" ? -1 : 1;
-  buildLobe(direction, sign1);
-  buildLobe(direction + Math.PI, -sign1);
-
-  return rlPoints;
-}
-
-function pickShape(shape) {
-  if (shape && shape !== "random") return shape;
-  const options = ["circular", "rectangular", "figure8"];
-  return options[Math.floor(Math.random() * options.length)];
-}
-
-function generateGuidePoints(
-  base,
-  targetM,
-  shape,
-  travelHeading = 0,
-  rotation = "clockwise",
-) {
-  const s = pickShape(shape);
-  if (s === "rectangular")
-    return {
-      points: rectangleRoute(base, targetM, travelHeading, rotation),
-      shape: s,
-    };
-  if (s === "figure8")
-    return {
-      points: fig8Route(base, targetM, travelHeading, rotation),
-      shape: s,
-    };
+function generateGuidePoints(base, targetM, travelHeading = 0, rotation = "clockwise") {
   return {
     points: circleRoute(base, targetM, travelHeading, rotation),
-    shape: s,
+    shape: "circular",
   };
 }
 
-function cleanTails(coords) {
-  if (!coords || coords.length < 4) {
-    return { newCoords: coords ?? [], cleanedCount: 0, distKm: 0 };
-  }
+// Scans the dense ORS route coords for "tail" segments — sections where the route
+// backtracks over itself (the route passes close to a later point, forming a lollipop).
+// Any such section that is shorter than TAIL_SIZE_THRESHOLD of the total route is removed.
+// Ported from RouteLoops (serverCodeOsm.js cleanTails / clientCode.js iterative loop).
+function detectAndRemoveTails(coords) {
+  const n = coords.length;
+  if (n < 4) return { newCoords: coords, cleanedUp: 0 };
 
-  const cumDist = [0];
-  for (let i = 1; i < coords.length; i++) {
-    cumDist.push(cumDist[i - 1] + latLngDistKm(coords[i - 1], coords[i]));
-  }
-  const totalDist = cumDist[cumDist.length - 1];
+  const pts = coords.map(([lng, lat]) => ({ lat, lng }));
 
-  const pLclose = new Array(coords.length);
-  const pLsep = new Array(coords.length);
-  for (let i = 0; i < coords.length; i++) {
-    let closest = Infinity;
-    let closestJ = i + 1;
-    for (let j = i + 1; j < coords.length; j++) {
-      const d = latLngDistKm(coords[i], coords[j]);
-      if (d < closest) {
-        closest = d;
-        closestJ = j;
-      }
+  const cumDist = new Float64Array(n);
+  for (let i = 1; i < n; i++) {
+    cumDist[i] = cumDist[i - 1] + latLngDistKm(pts[i - 1], pts[i]);
+  }
+  const totalKm = cumDist[n - 1];
+  if (totalKm === 0) return { newCoords: coords, cleanedUp: 0 };
+
+  // For each point find the index of the closest *subsequent* point.
+  const closestAhead = new Int32Array(n);
+  for (let i = 0; i < n - 1; i++) {
+    let bestDist = Infinity;
+    let bestJ = i + 1;
+    for (let j = i + 1; j < n; j++) {
+      const d = latLngDistKm(pts[i], pts[j]);
+      if (d < bestDist) { bestDist = d; bestJ = j; }
     }
-    pLclose[i] = closestJ;
-    pLsep[i] = closest;
+    closestAhead[i] = bestJ;
   }
+  closestAhead[n - 1] = n - 1;
 
-  const keep = new Array(coords.length).fill(false);
-  let i = 0;
-  while (i < coords.length) {
-    keep[i] = true;
-    const jump = pLclose[i];
-    if (jump !== i + 1) {
-      const tailSize = (cumDist[jump] - cumDist[i]) / totalDist;
-      if (tailSize < TAIL_FRACTION) {
-        i = jump;
+  const keep = new Uint8Array(n);
+  keep[0] = 1;
+  keep[n - 1] = 1;
+
+  for (let i = 0; i < n - 1; ) {
+    keep[i] = 1;
+    const ci = closestAhead[i];
+    if (ci - i !== 1) {
+      const tailSize = (cumDist[ci] - cumDist[i]) / totalKm;
+      if (tailSize < TAIL_SIZE_THRESHOLD) {
+        i = ci;
         continue;
       }
     }
     i++;
   }
-  keep[0] = true;
-  keep[coords.length - 1] = true;
 
-  const newCoords = coords.filter((_, idx) => keep[idx]);
-  const cleanedCount = coords.length - newCoords.length;
-
-  let distKm = 0;
-  for (let i = 1; i < newCoords.length; i++) {
-    distKm += latLngDistKm(newCoords[i - 1], newCoords[i]);
-  }
-
-  return { newCoords, cleanedCount, distKm };
+  const newCoords = coords.filter((_, i) => keep[i]);
+  return { newCoords, cleanedUp: coords.length - newCoords.length };
 }
 
-function snapWaypointsToPath(waypoints, pathCoords) {
+// For each guide waypoint {lat, lng} find the closest coord [lng, lat] in the
+// tail-cleaned path and return it as the new guide position.
+function snapWaypointsToCoords(waypoints, coords) {
+  if (!coords.length) return waypoints;
   return waypoints.map((wp) => {
-    let best = pathCoords[0];
-    let bestDist = latLngDistKm(wp, pathCoords[0]);
-    for (const pt of pathCoords) {
-      const d = latLngDistKm(wp, pt);
-      if (d < bestDist) {
-        bestDist = d;
-        best = pt;
-      }
+    let bestDist = Infinity;
+    let best = coords[0];
+    for (const c of coords) {
+      const d = latLngDistKm(wp, { lat: c[1], lng: c[0] });
+      if (d < bestDist) { bestDist = d; best = c; }
     }
-    return best;
+    return { lat: best[1], lng: best[0] };
   });
 }
 
-async function routeThrough(start, waypoints, orsProfile, orsElevOpts) {
-  const lngLatStart = toORS(start);
-  const allPts = [lngLatStart, ...waypoints.map(toORS), lngLatStart];
-  const ors = await fetchORSDirections(orsProfile, allPts, orsElevOpts);
-  const feat = ors.features?.[0];
-  if (!feat) throw new Error("ORS returned no route");
-  return orsFeatureToRouteData(feat);
-}
-
-async function runCleanLoop(start, initialWaypoints, orsProfile, orsElevOpts) {
-  let routeData = await routeThrough(
-    start,
-    initialWaypoints,
-    orsProfile,
-    orsElevOpts,
-  );
-  let waypoints = [...initialWaypoints];
-  let iterations = 0;
+// Iteratively removes tails from a routed loop:
+//   1. Detect and strip tail segments from the dense ORS coords.
+//   2. Snap guide points to the cleaned path (stops are not moved).
+//   3. Re-route — ORS should now stay on the tail-free path.
+//   4. Repeat until stable or MAX_TAIL_CLEAN_PASSES is reached.
+async function applyTailCleaning(
+  initialRouteData,
+  start,
+  guidePoints,
+  orsProfile,
+  orsElevOpts,
+  pinnedStops = [],
+) {
+  let routeData = initialRouteData;
+  let currentGuide = guidePoints;
   let lastCleaned = -1;
   let lastTotal = -1;
 
-  while (iterations < MAX_CLEAN_ITERATIONS) {
-    iterations++;
+  for (let pass = 0; pass < MAX_TAIL_CLEAN_PASSES; pass++) {
+    const { newCoords, cleanedUp } = detectAndRemoveTails(routeData.coords);
 
-    const coords = routeData.coords.map(toLngLat);
-    const { newCoords, cleanedCount, distKm } = cleanTails(coords);
-
-    if (
-      cleanedCount === 0 ||
-      (cleanedCount === lastCleaned && newCoords.length === lastTotal)
-    ) {
-      break;
-    }
-
-    lastCleaned = cleanedCount;
+    if (cleanedUp === 0) break;
+    if (cleanedUp === lastCleaned && newCoords.length === lastTotal) break;
+    lastCleaned = cleanedUp;
     lastTotal = newCoords.length;
 
-    waypoints = snapWaypointsToPath(waypoints, newCoords);
+    console.log(`[cleanTails] pass ${pass + 1}: removed ${cleanedUp} overlapping points, re-routing`);
 
-    routeData = await routeThrough(start, waypoints, orsProfile, orsElevOpts);
+    currentGuide = snapWaypointsToCoords(currentGuide, newCoords);
+
+    if (pinnedStops.length > 0) {
+      const { sequence: waypoints, insertIdx } = insertStopsCluster(start, currentGuide, pinnedStops);
+      const snapRadiuses = waypoints.map((_, i) => {
+        const posInSeq = i - insertIdx;
+        return posInSeq >= 0 && posInSeq < pinnedStops.length ? 350 : 3000;
+      });
+      routeData = await routeThrough(start, waypoints, orsProfile, orsElevOpts, snapRadiuses);
+    } else {
+      routeData = await routeThrough(start, currentGuide, orsProfile, orsElevOpts);
+    }
   }
 
-  return { routeData, waypoints };
+  return { routeData, guidePoints: currentGuide };
+}
+
+// Re-routes a loop that already has control points through one or more new
+// stops by routing each guide-point segment individually and stitching the
+// results together. This prevents ORS from finding cross-segment shortcuts
+// when the new stop happens to lie on a road that cuts through the loop.
+async function rerouteLoopWithStops(start, guidePoints, stops, orsProfile, orsElevOpts) {
+  // Build the ordered point sequence: start, guide points, stops inserted at
+  // cheapest positions, then back to start.
+  const segPoints = [start, ...guidePoints, start];
+  // Parallel array: true = user-placed stop (needs tight snap), false = guide/start point (needs wide snap).
+  const isStop = new Array(segPoints.length).fill(false);
+
+  for (const stop of stops) {
+    let bestIdx = 0;
+    let bestCost = Infinity;
+    for (let i = 0; i < segPoints.length - 1; i++) {
+      const cost =
+        latLngDistKm(segPoints[i], stop) +
+        latLngDistKm(stop, segPoints[i + 1]) -
+        latLngDistKm(segPoints[i], segPoints[i + 1]);
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestIdx = i;
+      }
+    }
+    segPoints.splice(bestIdx + 1, 0, stop);
+    isStop.splice(bestIdx + 1, 0, true);
+  }
+
+  // Route every consecutive pair in parallel — each call sees only its own
+  // two endpoints, so ORS cannot find a shortcut that spans multiple segments.
+  // Guide/start points keep the same 3000 m snap used during original loop
+  // generation; user stops use a tight 350 m snap to honour their position.
+  const segResults = await Promise.all(
+    segPoints.slice(0, -1).map((pt, i) => {
+      const fromSnap = isStop[i] ? 350 : 3000;
+      const toSnap = isStop[i + 1] ? 350 : 3000;
+      return fetchORSDirections(
+        orsProfile,
+        [toORS(pt), toORS(segPoints[i + 1])],
+        { ...orsElevOpts, radiuses: [fromSnap, toSnap] },
+      );
+    }),
+  );
+
+  // Stitch all segment geometries into one continuous route.
+  const coords = [];
+  const elevArr = [];
+  const maneuvers = [];
+  let distKm = 0;
+  let durationS = 0;
+  let ascentM = 0;
+  let descentM = 0;
+
+  for (let i = 0; i < segResults.length; i++) {
+    const feat = segResults[i]?.features?.[0];
+    if (!feat) throw new Error(`ORS returned no route for loop segment ${i}`);
+    const seg = orsFeatureToRouteData(feat);
+    if (coords.length > 0) {
+      coords.push(...seg.coords.slice(1));
+      elevArr.push(...seg.elevArr.slice(1));
+    } else {
+      coords.push(...seg.coords);
+      elevArr.push(...seg.elevArr);
+    }
+    maneuvers.push(...(seg.maneuvers ?? []));
+    distKm += seg.distance_km;
+    durationS += seg.duration_s;
+    ascentM += seg.ascent_m;
+    descentM += seg.descent_m;
+  }
+
+  return {
+    coords,
+    elevArr,
+    maneuvers,
+    distance_km: +distKm.toFixed(2),
+    duration_s: Math.round(durationS),
+    ascent_m: Math.round(ascentM),
+    descent_m: Math.round(descentM),
+  };
+}
+
+// Insert each stop individually at cheapest position — used only when the
+// caller has already provided explicit control points (user-drawn path).
+function insertStopsIntoGuidePoints(start, guidePoints, stops) {
+  const sequence = [...guidePoints];
+
+  for (const stop of stops) {
+    let bestIdx = 0;
+    let bestCost = Infinity;
+
+    for (let i = 0; i <= sequence.length; i++) {
+      const prev = i === 0 ? start : sequence[i - 1];
+      const next = i === sequence.length ? start : sequence[i];
+      const cost =
+        latLngDistKm(prev, stop) +
+        latLngDistKm(stop, next) -
+        latLngDistKm(prev, next);
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestIdx = i;
+      }
+    }
+
+    sequence.splice(bestIdx, 0, stop);
+  }
+
+  return sequence;
+}
+
+// Insert the entire ordered stop sequence as one contiguous block at the
+// single gap in the guide-point loop that costs the least aerial detour.
+// Treating stops as a block prevents the zigzag/backtracking that happens
+// when individual stops are scattered at different positions around the loop:
+// the route enters the stop cluster once, visits all stops in order, then
+// continues along the loop — no weaving back and forth across the loop path.
+function insertStopsCluster(start, guidePoints, orderedStops) {
+  if (orderedStops.length === 0) return { sequence: [...guidePoints], insertIdx: 0 };
+
+  const firstStop = orderedStops[0];
+  const lastStop = orderedStops[orderedStops.length - 1];
+
+  let bestIdx = 0;
+  let bestCost = Infinity;
+
+  for (let i = 0; i <= guidePoints.length; i++) {
+    const prev = i === 0 ? start : guidePoints[i - 1];
+    const next = i === guidePoints.length ? start : guidePoints[i];
+    const cost =
+      latLngDistKm(prev, firstStop) +
+      latLngDistKm(lastStop, next) -
+      latLngDistKm(prev, next);
+    if (cost < bestCost) {
+      bestCost = cost;
+      bestIdx = i;
+    }
+  }
+
+  const sequence = [...guidePoints];
+  sequence.splice(bestIdx, 0, ...orderedStops);
+  return { sequence, insertIdx: bestIdx };
+}
+
+// snapRadiuses: per-waypoint snap radius in metres (excluding start/end).
+// Guide points use 3000 m (may be off-road); user stops use 350 m (near roads).
+// Defaults to 3000 m for all waypoints when omitted.
+async function routeThrough(
+  start,
+  waypoints,
+  orsProfile,
+  orsElevOpts,
+  snapRadiuses,
+) {
+  const lngLatStart = toORS(start);
+  const allPts = [lngLatStart, ...waypoints.map(toORS), lngLatStart];
+  const radiuses = [
+    -1,
+    ...(snapRadiuses ?? waypoints.map(() => 3000)),
+    -1,
+  ];
+  const ors = await fetchORSDirections(orsProfile, allPts, {
+    ...orsElevOpts,
+    radiuses,
+  });
+  const feat = ors.features?.[0];
+  if (!feat) throw new Error("ORS returned no route");
+  return orsFeatureToRouteData(feat);
 }
 
 function scaleGuidePointsFromOrigin(start, guidePoints, scaleFactor) {
@@ -326,6 +365,7 @@ function scaleGuidePointsFromOrigin(start, guidePoints, scaleFactor) {
   });
 }
 
+// Route through guide points and scale until distance converges.
 async function generateWithScaling(
   start,
   initialGuidePoints,
@@ -337,182 +377,30 @@ async function generateWithScaling(
   let best = null;
 
   for (let pass = 0; pass < MAX_SCALE_PASSES; pass++) {
-    const { routeData, waypoints: cleanedGuide } = await runCleanLoop(
+    const routeData = await routeThrough(
       start,
       guidePoints,
       orsProfile,
       orsElevOpts,
     );
-
     const actualM = routeData.distance_km * 1000;
     const offRatio = Math.abs(actualM - targetM) / targetM;
 
     if (
       best === null ||
-      offRatio < Math.abs(best.routeData.distance_km * 1000 - targetM) / targetM
+      offRatio <
+        Math.abs(best.routeData.distance_km * 1000 - targetM) / targetM
     ) {
-      best = { routeData, waypoints: cleanedGuide };
+      best = { routeData, waypoints: guidePoints };
     }
 
     if (offRatio <= DISTANCE_TOLERANCE) break;
 
-    const scale = targetM / actualM;
-    guidePoints = scaleGuidePointsFromOrigin(start, cleanedGuide, scale);
+    const scale = Math.pow(targetM / actualM, SCALE_DAMPING);
+    guidePoints = scaleGuidePointsFromOrigin(start, guidePoints, scale);
   }
 
   return best;
-}
-
-function centroidOf(points) {
-  const n = points.length;
-  const lat = points.reduce((s, p) => s + p.lat, 0) / n;
-  const lng = points.reduce((s, p) => s + p.lng, 0) / n;
-  return { lat, lng };
-}
-
-function bearingFromOrigin(origin, point) {
-  const dlat = point.lat - origin.lat;
-  const dlng = point.lng - origin.lng;
-  return Math.atan2(dlng, dlat);
-}
-
-function sortByBearing(points, origin) {
-  return [...points].sort(
-    (a, b) => bearingFromOrigin(origin, a) - bearingFromOrigin(origin, b),
-  );
-}
-
-function buildPaddingGuidePoints(start, orderedStops, gapM) {
-  if (orderedStops.length === 0) return [];
-
-  const c = centroidOf(orderedStops);
-  const mainBearing = Math.atan2(c.lng - start.lng, c.lat - start.lat);
-  const perpBearing = mainBearing + Math.PI / 2;
-  const cosLat = Math.cos((start.lat * Math.PI) / 180);
-
-  const minRadius = 300; // metres
-  const radius = Math.max(minRadius, Math.min(Math.abs(gapM) / 2.6, 20_000));
-
-  const makePoint = (bearing, r) => ({
-    lat: start.lat + (r * Math.cos(bearing)) / 110540,
-    lng: start.lng + (r * Math.sin(bearing)) / (111320 * cosLat),
-  });
-
-  if (gapM < 3_000) {
-    return [makePoint(perpBearing, radius)];
-  }
-  return [
-    makePoint(perpBearing, radius),
-    makePoint(perpBearing + Math.PI, radius),
-  ];
-}
-
-async function runCleanLoopWithPins(
-  start,
-  guidePoints,
-  pinnedPoints,
-  orsProfile,
-  orsElevOpts,
-) {
-  const merged = sortByBearing([...guidePoints, ...pinnedPoints], start);
-
-  let routeData = await routeThrough(start, merged, orsProfile, orsElevOpts);
-  let currentGuide = [...guidePoints];
-  let iterations = 0;
-  let lastCleaned = -1;
-  let lastTotal = -1;
-
-  while (iterations < MAX_CLEAN_ITERATIONS) {
-    iterations++;
-
-    const coords = routeData.coords.map(toLngLat);
-    const { newCoords, cleanedCount } = cleanTailsWithPins(
-      coords,
-      pinnedPoints,
-    );
-
-    if (
-      cleanedCount === 0 ||
-      (cleanedCount === lastCleaned && newCoords.length === lastTotal)
-    ) {
-      break;
-    }
-
-    lastCleaned = cleanedCount;
-    lastTotal = newCoords.length;
-
-    currentGuide = snapWaypointsToPath(currentGuide, newCoords);
-
-    const nextMerged = sortByBearing([...currentGuide, ...pinnedPoints], start);
-    routeData = await routeThrough(start, nextMerged, orsProfile, orsElevOpts);
-  }
-
-  return { routeData, guidePoints: currentGuide };
-}
-function cleanTailsWithPins(coords, pinnedPoints) {
-  if (!coords || coords.length < 4) {
-    return { newCoords: coords ?? [], cleanedCount: 0 };
-  }
-
-  const SNAP_DIST_KM = 0.05;
-  const pinnedIndices = new Set();
-  for (let i = 0; i < coords.length; i++) {
-    for (const pin of pinnedPoints) {
-      if (latLngDistKm(coords[i], pin) <= SNAP_DIST_KM) {
-        pinnedIndices.add(i);
-        break;
-      }
-    }
-  }
-
-  const cumDist = [0];
-  for (let i = 1; i < coords.length; i++) {
-    cumDist.push(cumDist[i - 1] + latLngDistKm(coords[i - 1], coords[i]));
-  }
-  const totalDist = cumDist[cumDist.length - 1];
-
-  const pLclose = new Array(coords.length);
-  for (let i = 0; i < coords.length; i++) {
-    let closest = Infinity;
-    let closestJ = i + 1;
-    for (let j = i + 1; j < coords.length; j++) {
-      const d = latLngDistKm(coords[i], coords[j]);
-      if (d < closest) {
-        closest = d;
-        closestJ = j;
-      }
-    }
-    pLclose[i] = closestJ;
-  }
-
-  const keep = new Array(coords.length).fill(false);
-  let i = 0;
-  while (i < coords.length) {
-    keep[i] = true;
-    const jump = pLclose[i];
-    if (jump !== i + 1) {
-      const tailSize = (cumDist[jump] - cumDist[i]) / totalDist;
-      if (tailSize < TAIL_FRACTION) {
-        let hasPinnedInTail = false;
-        for (let k = i + 1; k < jump; k++) {
-          if (pinnedIndices.has(k)) {
-            hasPinnedInTail = true;
-            break;
-          }
-        }
-        if (!hasPinnedInTail) {
-          i = jump;
-          continue;
-        }
-      }
-    }
-    i++;
-  }
-  keep[0] = true;
-  keep[coords.length - 1] = true;
-
-  const newCoords = coords.filter((_, idx) => keep[idx]);
-  return { newCoords, cleanedCount: coords.length - newCoords.length };
 }
 
 async function generatePureLoop({
@@ -520,7 +408,6 @@ async function generatePureLoop({
   targetM,
   orsProfile,
   orsElevOpts,
-  shape,
   travelHeading,
   rotation,
 }) {
@@ -529,7 +416,6 @@ async function generatePureLoop({
   const { points: guidePoints, shape: usedShape } = generateGuidePoints(
     startLatLng,
     targetM,
-    shape,
     travelHeading,
     rotation,
   );
@@ -544,13 +430,30 @@ async function generatePureLoop({
 
   if (!result) throw new Error("All loop generation attempts failed");
 
+  let finalRouteData = result.routeData;
+  let finalGuidePoints = result.waypoints;
+
+  try {
+    const cleaned = await applyTailCleaning(
+      result.routeData,
+      startLatLng,
+      result.waypoints,
+      orsProfile,
+      orsElevOpts,
+    );
+    finalRouteData = cleaned.routeData;
+    finalGuidePoints = cleaned.guidePoints;
+  } catch (err) {
+    console.warn(`[cleanTails] pure loop cleaning failed: ${err.message}`);
+  }
+
   return {
-    routeData: result.routeData,
-    controlPoints: result.waypoints.map(toORS),
+    routeData: finalRouteData,
+    controlPoints: finalGuidePoints.map(toORS),
     orderedStops: [],
     meta: {
       requested_km: +(targetM / 1000).toFixed(2),
-      actual_km: result.routeData.distance_km,
+      actual_km: finalRouteData.distance_km,
       shape: usedShape,
       min_distance_km: null,
       snapped_to_min: false,
@@ -566,30 +469,94 @@ async function generateLoopWithStops({
   stops,
   orsProfile,
   orsElevOpts,
+  travelHeading,
+  rotation,
 }) {
   const startLatLng = { lat: start[1], lng: start[0] };
 
   const tsp = await solveTspLoop(start, stops, orsProfile);
   const minKm = +(tsp.minDistanceM / 1000).toFixed(2);
 
-  const snappedToMin = tsp.minDistanceM > targetM * 1.1;
+  // When stops already account for ≥75% of the target distance, inserting them
+  // into a guide-point loop creates a lollipop that tail-cleaning destroys
+  // repeatedly. Route directly through the stops instead — the result is a
+  // clean loop that visits all requested places without backtracking.
+  const snappedToMin = tsp.minDistanceM > targetM * 0.75;
   const effectiveTargetM = snappedToMin ? tsp.minDistanceM : targetM;
-
   const pinnedStops = tsp.orderedStops.map(([lng, lat]) => ({ lat, lng }));
 
-  const gapM = Math.max(0, effectiveTargetM - tsp.minDistanceM);
-  let guidePoints = buildPaddingGuidePoints(startLatLng, pinnedStops, gapM);
-
-  let best = null;
-  for (let pass = 0; pass < MAX_SCALE_PASSES; pass++) {
-    const { routeData, guidePoints: cleanedGuide } = await runCleanLoopWithPins(
+  // Stops dominate the distance: route directly through them.
+  // Use a tight 350 m snap so ORS honours the stop positions rather than
+  // jumping to a distant road — matching the snap used in the scaling path.
+  if (snappedToMin) {
+    const stopRadiuses = pinnedStops.map(() => 350);
+    const routeData = await routeThrough(
       startLatLng,
-      guidePoints,
       pinnedStops,
       orsProfile,
       orsElevOpts,
+      stopRadiuses,
+    );
+    return {
+      routeData,
+      controlPoints: [],
+      orderedStops: tsp.orderedStops,
+      meta: {
+        requested_km: +(targetM / 1000).toFixed(2),
+        actual_km: routeData.distance_km,
+        min_distance_km: minKm,
+        snapped_to_min: tsp.minDistanceM > targetM,
+        auto_extended: false,
+        overlap_ratio: null,
+        shape: null,
+      },
+    };
+  }
+
+  // Size the initial loop shape for the distance budget after stops are
+  // accounted for. Stops consume roughly tsp.minDistanceM, so the loop
+  // geometry only needs to cover the remainder. This makes the first ORS call
+  // land close to the target and minimises wasted scaling passes.
+  const loopBudgetM = Math.max(
+    effectiveTargetM * 0.25,
+    effectiveTargetM - tsp.minDistanceM,
+  );
+
+  const { points: shapePoints, shape: usedShape } = generateGuidePoints(
+    startLatLng,
+    loopBudgetM,
+    travelHeading,
+    rotation,
+  );
+  let guidePoints = shapePoints;
+  let best = null;
+
+  for (let pass = 0; pass < MAX_SCALE_PASSES; pass++) {
+    // Insert the entire stop sequence as one block at the gap in the loop
+    // that naturally passes closest to the stop cluster. This keeps the
+    // guide-point arc intact on both sides so ORS never has to zigzag
+    // between synthetic geometry and user stops.
+    const { sequence: waypoints, insertIdx } = insertStopsCluster(
+      startLatLng,
+      guidePoints,
+      pinnedStops,
     );
 
+    // Guide points (geometric, may be off-road) get a wide 3 km snap so ORS
+    // can always find a road. User-placed stops get a tight 350 m snap so ORS
+    // honours their position rather than jumping to a distant road.
+    const snapRadiuses = waypoints.map((_, i) => {
+      const posInSeq = i - insertIdx;
+      return posInSeq >= 0 && posInSeq < pinnedStops.length ? 350 : 3000;
+    });
+
+    const routeData = await routeThrough(
+      startLatLng,
+      waypoints,
+      orsProfile,
+      orsElevOpts,
+      snapRadiuses,
+    );
     const actualM = routeData.distance_km * 1000;
     const offRatio = Math.abs(actualM - effectiveTargetM) / effectiveTargetM;
 
@@ -599,29 +566,53 @@ async function generateLoopWithStops({
         Math.abs(best.routeData.distance_km * 1000 - effectiveTargetM) /
           effectiveTargetM
     ) {
-      best = { routeData, guidePoints: cleanedGuide };
+      best = { routeData, guidePoints };
     }
 
-    if (offRatio <= DISTANCE_TOLERANCE || guidePoints.length === 0) break;
+    if (offRatio <= DISTANCE_TOLERANCE) break;
 
-    const scale = effectiveTargetM / actualM;
-    guidePoints = scaleGuidePointsFromOrigin(startLatLng, cleanedGuide, scale);
+    // Scale only the guide-point "portion" of the route. Stops are fixed
+    // geographic points — they don't move when guide points scale, so using
+    // the total distance ratio overcorrects. Isolate the guide contribution.
+    const stopBudgetM = Math.min(tsp.minDistanceM, actualM * 0.9);
+    const guideActualM = Math.max(1, actualM - stopBudgetM);
+    const guideBudgetM = Math.max(1, effectiveTargetM - stopBudgetM);
+    const scale = Math.max(0.3, Math.min(3.0, Math.pow(guideBudgetM / guideActualM, SCALE_DAMPING)));
+    guidePoints = scaleGuidePointsFromOrigin(startLatLng, guidePoints, scale);
   }
 
   if (!best) throw new Error("ORS returned no route for stops loop");
 
+  let finalRouteData = best.routeData;
+  let finalGuidePoints = best.guidePoints;
+
+  try {
+    const cleaned = await applyTailCleaning(
+      best.routeData,
+      startLatLng,
+      best.guidePoints,
+      orsProfile,
+      orsElevOpts,
+      pinnedStops,
+    );
+    finalRouteData = cleaned.routeData;
+    finalGuidePoints = cleaned.guidePoints;
+  } catch (err) {
+    console.warn(`[cleanTails] stops loop cleaning failed: ${err.message}`);
+  }
+
   return {
-    routeData: best.routeData,
-    controlPoints: best.guidePoints.map(toORS),
+    routeData: finalRouteData,
+    controlPoints: finalGuidePoints.map(toORS),
     orderedStops: tsp.orderedStops,
     meta: {
       requested_km: +(targetM / 1000).toFixed(2),
-      actual_km: best.routeData.distance_km,
+      actual_km: finalRouteData.distance_km,
       min_distance_km: minKm,
-      snapped_to_min: snappedToMin,
+      snapped_to_min: false,
       auto_extended: false,
       overlap_ratio: null,
-      shape: null,
+      shape: usedShape,
     },
   };
 }
@@ -633,7 +624,6 @@ export async function generateLoop({
   orsElevOpts = {},
   stops = [],
   controlPoints = [],
-  shape = "random",
   travelHeading = 0,
   rotation = "clockwise",
 }) {
@@ -642,17 +632,23 @@ export async function generateLoop({
     const guideLatLng = controlPoints.map(([lng, lat]) => ({ lat, lng }));
     const pinnedLatLng = stops.map(([lng, lat]) => ({ lat, lng }));
 
-    const { routeData, guidePoints: cleanedGuide } = await runCleanLoopWithPins(
-      startLatLng,
-      guideLatLng,
-      pinnedLatLng,
-      orsProfile,
-      orsElevOpts,
-    );
+    // When stops are present, route each guide-point segment individually so
+    // ORS cannot exploit a road shortcut near the new stop to collapse large
+    // portions of the loop. Each segment call sees only its own two endpoints.
+    const routeData =
+      pinnedLatLng.length > 0
+        ? await rerouteLoopWithStops(
+            startLatLng,
+            guideLatLng,
+            pinnedLatLng,
+            orsProfile,
+            orsElevOpts,
+          )
+        : await routeThrough(startLatLng, guideLatLng, orsProfile, orsElevOpts);
 
     return {
       routeData,
-      controlPoints: cleanedGuide.map(toORS),
+      controlPoints: guideLatLng.map(toORS),
       orderedStops: stops,
       meta: {
         requested_km: +(targetM / 1000).toFixed(2),
@@ -673,6 +669,8 @@ export async function generateLoop({
       stops,
       orsProfile,
       orsElevOpts,
+      travelHeading,
+      rotation,
     });
   }
 
@@ -681,7 +679,6 @@ export async function generateLoop({
     targetM,
     orsProfile,
     orsElevOpts,
-    shape,
     travelHeading,
     rotation,
   });

@@ -1,5 +1,4 @@
-import { View, Text, TouchableOpacity } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { View } from "react-native";
 import {
   SectionLabel,
   LocationRow,
@@ -10,11 +9,11 @@ import {
   type TransportKey,
   type ElevationKey,
 } from "@/components/generate/route-form-components";
+import { StopsList, type MustStop } from "@/components/generate/stops-list";
 import { formStyles as styles } from "@/components/generate/form-styles";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import type { ResolvedLocation } from "@/hooks/use-location-search";
-import type { MustStop } from "@/components/generate/stops-list";
 
 type Props = {
   startLocation: ResolvedLocation | null;
@@ -25,6 +24,7 @@ type Props = {
   onClearEnd: () => void;
   mustStops: MustStop[];
   onOpenStop: (id: string) => void;
+  onClearStopLocation: (id: string) => void;
   onRemoveStop: (id: string) => void;
   onAddStop: () => void;
   transport: TransportKey;
@@ -47,6 +47,7 @@ export function AtoBTab({
   onClearEnd,
   mustStops,
   onOpenStop,
+  onClearStopLocation,
   onRemoveStop,
   onAddStop,
   transport,
@@ -59,13 +60,16 @@ export function AtoBTab({
   onPoiCountChange,
   colors: c,
 }: Props) {
-  const { t } = useTranslation();
-
   return (
     <View style={styles.formSection}>
       <View style={styles.formGroup}>
         <SectionLabel label={t("generate.section-locations")} color={c.muted} />
-        <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+        <View
+          style={[
+            styles.card,
+            { backgroundColor: c.surface, borderColor: c.border },
+          ]}
+        >
           <LocationRow
             dotColor="#1D9E75"
             label={startLocation?.label ?? t("generate.placeholder-start")}
@@ -74,62 +78,21 @@ export function AtoBTab({
             onClear={onClearStart}
             textColor={c.text}
             mutedColor={c.muted}
-            accent={c.tint}
           />
 
-          {mustStops.map((stop, i) => (
-            <View key={stop.id}>
-              <View style={[styles.locationDivider, { backgroundColor: c.border }]} />
-              <View style={styles.stopRow}>
-                <Ionicons
-                  name="reorder-three-outline"
-                  size={18}
-                  color={c.muted}
-                  style={styles.stopHandle}
-                />
-                <View style={[styles.stopDot, { borderColor: c.tint }]} />
-                <TouchableOpacity
-                  style={{ flex: 1 }}
-                  onPress={() => onOpenStop(stop.id)}
-                  activeOpacity={0.6}
-                >
-                  <Text
-                    style={[
-                      styles.locText,
-                      { color: stop.location ? c.text : c.muted },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {stop.location?.label ?? t("generate.stop-label", { n: String(i + 1) })}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => onRemoveStop(stop.id)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  activeOpacity={0.6}
-                >
-                  <Ionicons name="close-circle" size={18} color={c.muted} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          ))}
+          <StopsList
+            stops={mustStops}
+            onOpenStop={onOpenStop}
+            onClearStopLocation={onClearStopLocation}
+            onRemoveStop={onRemoveStop}
+            onAddStop={onAddStop}
+            colors={c}
+            embedded
+          />
 
-          <View style={[styles.locationDivider, { backgroundColor: c.border }]} />
-          <TouchableOpacity style={styles.addStopRow} onPress={onAddStop} activeOpacity={0.6}>
-            <View
-              style={[
-                styles.addStopIcon,
-                { backgroundColor: c.tint + "18", borderColor: c.tint + "40" },
-              ]}
-            >
-              <Ionicons name="add" size={14} color={c.tint} />
-            </View>
-            <Text style={[styles.addStopLabel, { color: c.tint }]}>
-              {t("generate.add-stop")}
-            </Text>
-          </TouchableOpacity>
-
-          <View style={[styles.locationDivider, { backgroundColor: c.border }]} />
+          <View
+            style={[styles.locationDivider, { backgroundColor: c.border }]}
+          />
           <LocationRow
             dotColor="#E24B4A"
             label={endLocation?.label ?? t("generate.placeholder-destination")}
@@ -138,7 +101,6 @@ export function AtoBTab({
             onClear={onClearEnd}
             textColor={c.text}
             mutedColor={c.muted}
-            accent={c.tint}
           />
         </View>
       </View>
@@ -173,7 +135,6 @@ export function AtoBTab({
             accent={c.tint}
             surface={c.surface}
             border={c.border}
-            textColor={c.text}
             mutedColor={c.muted}
           />
         )}

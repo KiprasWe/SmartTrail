@@ -14,7 +14,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import { ScreenHeader } from "@/components/ui/screen-header";
 
 export interface PasswordFormField {
@@ -47,7 +47,6 @@ export function PasswordForm({
   const router = useRouter();
   const scheme = useColorScheme() ?? "light";
   const ts = Colors[scheme];
-  const { t } = useTranslation();
 
   const saveChip = (
     <TouchableOpacity

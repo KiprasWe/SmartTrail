@@ -14,7 +14,7 @@ import {
 import { formStyles as styles } from "@/components/generate/form-styles";
 import { StopsList, type MustStop } from "@/components/generate/stops-list";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import type { ResolvedLocation } from "@/hooks/use-location-search";
 
 type Props = {
@@ -64,8 +64,6 @@ export function RoundTripTab({
   onPoiCountChange,
   colors: c,
 }: Props) {
-  const { t } = useTranslation();
-
   return (
     <View style={styles.formSection}>
       <View style={styles.formGroup}>
@@ -79,7 +77,6 @@ export function RoundTripTab({
             onClear={onClearStart}
             textColor={c.text}
             mutedColor={c.muted}
-            accent={c.tint}
           />
         </View>
       </View>
@@ -141,7 +138,6 @@ export function RoundTripTab({
             accent={c.tint}
             surface={c.surface}
             border={c.border}
-            textColor={c.text}
             mutedColor={c.muted}
           />
         )}

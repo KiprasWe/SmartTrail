@@ -1,8 +1,8 @@
 import { fetchWithRetry } from "../utils/http.js";
 import { haversineM } from "./geo.js";
+import { ORS_MATRIX_URL } from "./ors.js";
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
-const ORS_MATRIX_URL = "https://api.openrouteservice.org/v2/matrix";
 const HELD_KARP_LIMIT = 9;
 
 export async function fetchORSMatrix(orsProfile, locations) {

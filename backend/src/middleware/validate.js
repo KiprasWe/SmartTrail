@@ -3,10 +3,6 @@ import { sendError, Errors } from "../utils/responses.js";
 export const validate =
   (schema, source = "body") =>
   (req, res, next) => {
-    if (source === "body" && req.file && Object.keys(req.body).length === 0) {
-      return next();
-    }
-
     const result = schema.safeParse(req[source]);
 
     if (!result.success) {

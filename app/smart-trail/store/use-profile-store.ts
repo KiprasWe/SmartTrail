@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuthStore } from "./use-auth-store";
-import { getErrMessage } from "@/lib/error-messages";
+import { resolveErr } from "@/lib/error-messages";
 import type { UserProfile, EditForm } from "@/types/profile";
 
 export type { UserProfile, EditForm };
@@ -68,7 +68,7 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
       set({ profile, error: null });
       AsyncStorage.setItem(CACHE_KEY, JSON.stringify(profile)).catch(() => {});
     } catch (err: unknown) {
-      set({ error: getErrMessage(err) });
+      set({ error: resolveErr(err) });
     } finally {
       set({ loading: false });
     }
@@ -84,7 +84,9 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
         ...(bio !== undefined && { bio }),
       },
     });
-    return data.data.user;
+    const updated: UserProfile = data.data.user;
+    get().setProfile(updated);
+    return updated;
   },
 
   changePassword: async (currentPassword, newPassword) => {

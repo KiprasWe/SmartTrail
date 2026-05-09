@@ -86,7 +86,7 @@ export const changePassword = asyncHandler(async (req, res) => {
     return sendError(res, Errors.INVALID_CURRENT_PASSWORD);
   }
 
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  const hashedPassword = await bcrypt.hash(newPassword, 12);
 
   await prisma.user.update({
     where: { id: req.user.id },

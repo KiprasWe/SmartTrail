@@ -3,8 +3,8 @@ import { Alert } from "react-native";
 import { router } from "expo-router";
 import EventSource from "react-native-sse";
 import { useAuthStore } from "@/store/use-auth-store";
-import { useTranslation } from "@/hooks/use-translation";
-import i18n from "@/lib/i18n";
+import { resolveErr } from "@/lib/error-messages";
+import i18n, { t } from "@/lib/i18n";
 import type { ResolvedLocation } from "@/hooks/use-location-search";
 
 type AiStage = "ai_pois" | "enriching" | "routing";
@@ -12,9 +12,9 @@ type AiStreamEvents = "stage" | "done" | "error";
 
 function getAiStageLabel(stage: AiStage): string {
   const map: Record<AiStage, string> = {
-    ai_pois: i18n.t("generate.ai-stage-planning"),
-    enriching: i18n.t("generate.ai-stage-enriching"),
-    routing: i18n.t("generate.ai-stage-routing"),
+    ai_pois: t("generate.ai-stage-planning"),
+    enriching: t("generate.ai-stage-enriching"),
+    routing: t("generate.ai-stage-routing"),
   };
   return map[stage];
 }
@@ -53,9 +53,8 @@ type AToBGenParams = {
 type GenParams = AiGenParams | LoopGenParams | AToBGenParams;
 
 const ELEV_MAP: Record<string, string> = {
-  auto: "auto",
   flat: "flat",
-  moderate: "optimal",
+  moderate: "moderate",
   hilly: "hilly",
 };
 
@@ -80,7 +79,6 @@ export type GenerateInput = {
 };
 
 export function useRouteGeneration() {
-  const { t } = useTranslation();
   const getValidToken = useAuthStore((s) => s.getValidToken);
   const [generating, setGenerating] = useState(false);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
@@ -89,8 +87,9 @@ export function useRouteGeneration() {
   // if the user navigates away before the stream completes.
   const esCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
+    const ref = esCleanupRef;
     return () => {
-      esCleanupRef.current?.();
+      ref.current?.();
     };
   }, []);
 
@@ -135,7 +134,7 @@ export function useRouteGeneration() {
             ...(aiEnd ? { end: aiEnd } : { distance: pickedDistanceM }),
             ...(waypointCoords.length > 0 ? { waypoints: waypointCoords } : {}),
             profile: input.transport,
-            elevationPreference: ELEV_MAP[input.elevation] ?? "optimal",
+            elevationPreference: ELEV_MAP[input.elevation] ?? "moderate",
             preferences: input.aiPrompt.trim(),
             lang: (i18n.locale === "lt" ? "lt" : "en") as "en" | "lt",
           };
@@ -178,7 +177,7 @@ export function useRouteGeneration() {
               start,
               distance: pickedDistanceM,
               profile: input.transport,
-              elevationPreference: ELEV_MAP[input.elevation] ?? "optimal",
+              elevationPreference: ELEV_MAP[input.elevation] ?? "moderate",
               poiTypes: [...input.selectedPoi],
               poiCount: input.selectedPoi.size > 0 ? input.poiCount : 0,
               waypoints: waypointCoords,
@@ -188,7 +187,7 @@ export function useRouteGeneration() {
               start,
               end,
               profile: input.transport,
-              elevationPreference: ELEV_MAP[input.elevation] ?? "optimal",
+              elevationPreference: ELEV_MAP[input.elevation] ?? "moderate",
               poiTypes: [...input.selectedPoi],
               poiCount: input.selectedPoi.size > 0 ? input.poiCount : 0,
               waypoints: waypointCoords,
@@ -201,11 +200,6 @@ export function useRouteGeneration() {
           data: genParams,
         });
 
-        console.log(
-          "[generate] routeResp:",
-          JSON.stringify(routeResp).slice(0, 300),
-        );
-
         router.push({
           pathname: "/route-map",
           params: {
@@ -214,28 +208,14 @@ export function useRouteGeneration() {
           },
         });
       } catch (err: unknown) {
-        const axiosErr = err as {
-          response?: { status?: number; data?: { message?: string; code?: string; error?: string } };
-          message?: string;
-        };
-        const respData = axiosErr?.response?.data;
-        const status = axiosErr?.response?.status;
-        const serverMsg = respData?.message ?? respData?.error ?? respData?.code;
-        const msg = serverMsg
-          ? `${serverMsg}${status ? ` (HTTP ${status})` : ""}`
-          : axiosErr?.message ?? t("generate.error");
-        console.error("[generate] failed:", {
-          status,
-          data: respData,
-          message: axiosErr?.message,
-        });
-        Alert.alert(t("generate.error"), msg);
+        console.error("[generate] failed:", err);
+        Alert.alert(t("generate.error"), resolveErr(err));
       } finally {
         setGenerating(false);
         setProgressLabel(null);
       }
     },
-    [getValidToken, t],
+    [getValidToken],
   );
 
   return { generate, generating, progressLabel };
@@ -295,26 +275,27 @@ function runAiStream(
         resolve();
       } catch {
         cleanup();
-        reject(new Error("Failed to parse AI route response"));
+        reject({ response: { data: { code: "AI_GENERATION_FAILED" } } });
       }
     });
 
     es.addEventListener("error", (event: any) => {
       cleanup();
-      // `error` covers both server-emitted typed errors (event.data is
-      // JSON) and connection-level failures (event.data is undefined).
-      let msg = "Route generation failed";
+      // `error` covers both server-emitted typed errors (event.data is JSON with
+      // a known error code) and connection-level failures (event.data is undefined).
+      let code = "UNKNOWN_ERROR";
       if (event?.data) {
         try {
           const payload = JSON.parse(event.data);
-          msg = payload.message ?? payload.code ?? msg;
+          code = typeof payload.code === "string" ? payload.code : "AI_GENERATION_FAILED";
         } catch {
-          /* ignore */
+          code = "AI_GENERATION_FAILED";
         }
-      } else if (event?.message) {
-        msg = event.message;
+      } else {
+        code = "NETWORK_ERROR";
       }
-      reject(new Error(msg));
+      // Reject with a synthetic Axios-like error so resolveErr can translate it.
+      reject({ response: { data: { code } } });
     });
   });
 }

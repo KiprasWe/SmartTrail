@@ -24,6 +24,7 @@ export interface PoiProperties {
   photo_name?: string | null;
   place_id?: string | null;
   essential?: boolean | null;
+  is_route_waypoint?: boolean;
 }
 
 export interface PoiFeature {
@@ -95,8 +96,6 @@ export interface GenParams {
 }
 
 export interface RouteVariant {
-  label: string;
-  description: string;
   profile: string;
   distance_km: number;
   duration_s: number;

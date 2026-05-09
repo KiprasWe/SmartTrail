@@ -8,11 +8,10 @@ import { StatusBar } from "expo-status-bar";
 import "../global.css";
 import "react-native-reanimated";
 
-import { useColorScheme } from "@/hooks/theme/use-color-scheme";
+import { useColorScheme, View, ActivityIndicator } from "react-native";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useProfileStore } from "@/store/use-profile-store";
 import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
-import { View, ActivityIndicator } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useEffect } from "react";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -35,6 +34,9 @@ function RootLayoutNav() {
         useSavedRoutesStore.getState().bootstrap();
       }
     });
+    // bootstrap* are stable Zustand action references; we only want this
+    // effect to run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (isLoading) {

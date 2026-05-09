@@ -13,22 +13,6 @@ export const formStyles = StyleSheet.create({
   locationDivider: { height: StyleSheet.hairlineWidth, marginLeft: 38 },
   locText: { flex: 1, fontSize: 15 },
 
-  stopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-  },
-  stopHandle: { marginRight: -2 },
-  stopDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    borderWidth: 2,
-    backgroundColor: "transparent",
-  },
-
   addStopRow: {
     flexDirection: "row",
     alignItems: "center",

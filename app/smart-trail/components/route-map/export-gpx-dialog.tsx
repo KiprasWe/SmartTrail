@@ -9,7 +9,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import { modalStyles } from "./modal-styles";
 
 type Props = {
@@ -29,7 +29,6 @@ export function ExportGpxDialog({
   onConfirm,
   colors: c,
 }: Props) {
-  const { t } = useTranslation();
   const placeholder = `route_${new Date().toISOString().slice(0, 10)}`;
 
   return (

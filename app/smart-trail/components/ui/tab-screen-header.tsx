@@ -63,17 +63,15 @@ export function TabScreenHeader({
           style={[
             mainTabScreenTitleStyle,
             { color: ts.text },
-            !stacked && styles.titleFlex,
+            styles.titleFlex,
           ]}
           numberOfLines={1}
         >
           {title}
         </Text>
-        {!stacked && right != null ? (
-          <View style={styles.rightSlot}>{right}</View>
-        ) : null}
+        {right != null ? <View style={styles.rightSlot}>{right}</View> : null}
       </View>
-      {stacked && footer != null ? footer : null}
+      {footer ?? null}
     </View>
   );
 }

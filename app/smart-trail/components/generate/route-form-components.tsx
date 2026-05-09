@@ -1,28 +1,24 @@
-import React from "react";
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   TextInput,
+  StatusBar,
   useColorScheme,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StatusBar } from "react-native";
 import { Colors } from "@/constants/theme";
-import i18n from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 
 export type TransportKey =
   | "foot-walking"
   | "foot-hiking"
   | "running"
-  | "cycling-regular"
-  | "cycling-mountain"
-  | "cycling-road";
+  | "cycling-regular";
 
-export type ElevationKey = "auto" | "flat" | "moderate" | "hilly";
+export type ElevationKey = "flat" | "moderate" | "hilly";
 
 export type DistanceKey = "5" | "10" | "15" | "20" | "custom";
 
@@ -31,66 +27,35 @@ export type DistanceKey = "5" | "10" | "15" | "20" | "custom";
 export const TRANSPORT_OPTIONS: {
   key: TransportKey;
   tKey: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
 }[] = [
-  {
-    key: "foot-walking",
-    tKey: "generate.transport-walking",
-    icon: "walk-outline",
-  },
-  {
-    key: "foot-hiking",
-    tKey: "generate.transport-hiking",
-    icon: "trail-sign-outline",
-  },
-  {
-    key: "running",
-    tKey: "generate.transport-running",
-    icon: "fitness-outline",
-  },
-  {
-    key: "cycling-regular",
-    tKey: "generate.transport-cycling",
-    icon: "bicycle-outline",
-  },
-  {
-    key: "cycling-road",
-    tKey: "generate.transport-road",
-    icon: "speedometer-outline",
-  },
-  {
-    key: "cycling-mountain",
-    tKey: "generate.transport-mtb",
-    icon: "navigate-outline",
-  },
+  { key: "foot-walking", tKey: "generate.transport-walking", icon: "walk" },
+  { key: "foot-hiking", tKey: "generate.transport-hiking", icon: "hiking" },
+  { key: "running", tKey: "generate.transport-running", icon: "run" },
+  { key: "cycling-regular", tKey: "generate.transport-cycling", icon: "bike" },
 ];
 
 export const ELEVATION_OPTIONS: {
   key: ElevationKey;
   tKey: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
 }[] = [
-  { key: "auto", tKey: "generate.elevation-auto", icon: "options-outline" },
-  { key: "flat", tKey: "generate.elevation-flat", icon: "remove-outline" },
-  {
-    key: "moderate",
-    tKey: "generate.elevation-moderate",
-    icon: "pulse-outline",
-  },
-  { key: "hilly", tKey: "generate.elevation-hilly", icon: "triangle-outline" },
+  { key: "flat", tKey: "generate.elevation-flat", icon: "minus" },
+  { key: "moderate", tKey: "generate.elevation-moderate", icon: "trending-up" },
+  { key: "hilly", tKey: "generate.elevation-hilly", icon: "image-filter-hdr" },
 ];
 
 export const POI_OPTIONS: {
   key: string;
   tKey: string;
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
 }[] = [
-  { key: "nature", tKey: "generate.poi-nature", icon: "leaf-outline" },
-  { key: "tourism", tKey: "generate.poi-viewpoints", icon: "eye-outline" },
-  { key: "historic", tKey: "generate.poi-historic", icon: "flag-outline" },
-  { key: "food", tKey: "generate.poi-food", icon: "cafe-outline" },
-  { key: "arts_culture", tKey: "generate.poi-arts", icon: "color-palette-outline" },
-  { key: "leisure", tKey: "generate.poi-leisure", icon: "basketball-outline" },
+  { key: "nature", tKey: "generate.poi-nature", icon: "leaf" },
+  { key: "tourism", tKey: "generate.poi-viewpoints", icon: "camera" },
+  { key: "historic", tKey: "generate.poi-historic", icon: "castle" },
+  { key: "food", tKey: "generate.poi-food", icon: "silverware-fork-knife" },
+  { key: "arts_culture", tKey: "generate.poi-arts", icon: "palette" },
+  { key: "leisure", tKey: "generate.poi-leisure", icon: "basketball" },
 ];
 
 export const DISTANCE_OPTIONS: {
@@ -130,7 +95,6 @@ export function LocationRow({
   alwaysShowClear,
   textColor,
   mutedColor,
-  accent,
 }: {
   dotColor: string;
   dotStyle?: "filled" | "outlined";
@@ -142,7 +106,6 @@ export function LocationRow({
   alwaysShowClear?: boolean;
   textColor: string;
   mutedColor: string;
-  accent: string;
 }) {
   const showClear = (alwaysShowClear || isFilled) && !!onClear;
   return (
@@ -152,8 +115,8 @@ export function LocationRow({
       activeOpacity={0.6}
     >
       {showHandle && (
-        <Ionicons
-          name="reorder-three-outline"
+        <MaterialCommunityIcons
+          name="drag-horizontal-variant"
           size={18}
           color={mutedColor}
           style={styles.stopHandle}
@@ -182,10 +145,10 @@ export function LocationRow({
           onPress={onClear}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         >
-          <Ionicons name="close-circle" size={18} color={mutedColor} />
+          <MaterialCommunityIcons name="close-circle" size={18} color={mutedColor} />
         </TouchableOpacity>
       ) : (
-        <Ionicons name="search-outline" size={16} color={mutedColor} />
+        <MaterialCommunityIcons name="magnify" size={16} color={mutedColor} />
       )}
     </TouchableOpacity>
   );
@@ -207,18 +170,14 @@ export function TransportPicker({
   mutedColor: string;
 }) {
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={styles.transportScroll}
-    >
+    <View style={styles.chipRow}>
       {TRANSPORT_OPTIONS.map((opt) => {
         const active = value === opt.key;
         return (
           <TouchableOpacity
             key={opt.key}
             style={[
-              styles.transportChip,
+              styles.iconChip,
               {
                 backgroundColor: active ? accent + "18" : surface,
                 borderColor: active ? accent : border,
@@ -227,7 +186,7 @@ export function TransportPicker({
             onPress={() => onChange(opt.key)}
             activeOpacity={0.7}
           >
-            <Ionicons
+            <MaterialCommunityIcons
               name={opt.icon}
               size={20}
               color={active ? accent : mutedColor}
@@ -238,12 +197,12 @@ export function TransportPicker({
                 { color: active ? accent : mutedColor },
               ]}
             >
-              {i18n.t(opt.tKey)}
+              {t(opt.tKey)}
             </Text>
           </TouchableOpacity>
         );
       })}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -279,7 +238,7 @@ export function ElevationPicker({
             onPress={() => onChange(opt.key)}
             activeOpacity={0.7}
           >
-            <Ionicons
+            <MaterialCommunityIcons
               name={opt.icon}
               size={20}
               color={active ? accent : mutedColor}
@@ -290,7 +249,7 @@ export function ElevationPicker({
                 { color: active ? accent : mutedColor },
               ]}
             >
-              {i18n.t(opt.tKey)}
+              {t(opt.tKey)}
             </Text>
           </TouchableOpacity>
         );
@@ -333,7 +292,7 @@ export function PoiPicker({
             onPress={() => onToggle(poi.key)}
             activeOpacity={0.7}
           >
-            <Ionicons
+            <MaterialCommunityIcons
               name={poi.icon}
               size={16}
               color={active ? accent : mutedColor}
@@ -341,7 +300,7 @@ export function PoiPicker({
             <Text
               style={[styles.poiLabel, { color: active ? accent : mutedColor }]}
             >
-              {i18n.t(poi.tKey)}
+              {t(poi.tKey)}
             </Text>
           </TouchableOpacity>
         );
@@ -350,13 +309,14 @@ export function PoiPicker({
   );
 }
 
+const POI_COUNT_OPTIONS = [3, 5, 7, 10, 0] as const; // 0 = All
+
 export function PoiCountPicker({
   value,
   onChange,
   accent,
   surface,
   border,
-  textColor,
   mutedColor,
 }: {
   value: number;
@@ -364,33 +324,32 @@ export function PoiCountPicker({
   accent: string;
   surface: string;
   border: string;
-  textColor: string;
   mutedColor: string;
 }) {
   return (
-    <View style={[styles.poiCountRow, { backgroundColor: surface, borderColor: border }]}>
-      <Text style={[styles.poiCountLabel, { color: mutedColor }]}>
-        {i18n.t("generate.poi-count-label")}
-      </Text>
-      <View style={styles.poiCountStepper}>
-        <TouchableOpacity
-          onPress={() => onChange(Math.max(1, value - 1))}
-          style={[styles.poiCountBtn, { borderColor: value <= 1 ? border : accent + "60" }]}
-          activeOpacity={0.7}
-          disabled={value <= 1}
-        >
-          <Ionicons name="remove" size={18} color={value <= 1 ? mutedColor : accent} />
-        </TouchableOpacity>
-        <Text style={[styles.poiCountValue, { color: textColor }]}>{value}</Text>
-        <TouchableOpacity
-          onPress={() => onChange(Math.min(10, value + 1))}
-          style={[styles.poiCountBtn, { borderColor: value >= 10 ? border : accent + "60" }]}
-          activeOpacity={0.7}
-          disabled={value >= 10}
-        >
-          <Ionicons name="add" size={18} color={value >= 10 ? mutedColor : accent} />
-        </TouchableOpacity>
-      </View>
+    <View style={styles.chipRow}>
+      {POI_COUNT_OPTIONS.map((opt) => {
+        const active = value === opt;
+        const label = opt === 0 ? t("generate.poi-count-all") : String(opt);
+        return (
+          <TouchableOpacity
+            key={opt}
+            style={[
+              styles.distChip,
+              {
+                backgroundColor: active ? accent + "18" : surface,
+                borderColor: active ? accent : border,
+              },
+            ]}
+            onPress={() => onChange(opt)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.distChipLabel, { color: active ? accent : mutedColor }]}>
+              {label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
@@ -440,7 +399,7 @@ export function DistancePicker({
                   { color: active ? accent : mutedColor },
                 ]}
               >
-                {opt.tKey ? i18n.t(opt.tKey) : opt.label}
+                {opt.tKey ? t(opt.tKey) : opt.label}
               </Text>
             </TouchableOpacity>
           );
@@ -455,7 +414,7 @@ export function DistancePicker({
         >
           <TextInput
             style={[styles.customDistInput, { color: textColor }]}
-            placeholder={i18n.t("generate.section-distance")}
+            placeholder={t("generate.section-distance")}
             placeholderTextColor={mutedColor}
             keyboardType="decimal-pad"
             value={customText}
@@ -487,13 +446,13 @@ export function OfflineScreen() {
             { backgroundColor: ts.surface, borderColor: ts.border },
           ]}
         >
-          <Ionicons name="wifi-outline" size={28} color={ts.muted} />
+          <MaterialCommunityIcons name="wifi-off" size={28} color={ts.muted} />
         </View>
         <Text style={[styles.offlineTitle, { color: ts.text }]}>
-          {i18n.t("generate.no-internet")}
+          {t("generate.no-internet")}
         </Text>
         <Text style={[styles.offlineBody, { color: ts.muted }]}>
-          {i18n.t("generate.no-internet-body")}
+          {t("generate.no-internet-body")}
         </Text>
       </View>
     </View>
@@ -542,18 +501,6 @@ const styles = StyleSheet.create({
   locText: { flex: 1, fontSize: 15 },
   stopHandle: { marginRight: -2 },
 
-  transportScroll: { gap: 8, paddingHorizontal: 16, marginHorizontal: -16 },
-  transportChip: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 4,
-    minWidth: 68,
-  },
-
   chipRow: { flexDirection: "row", gap: 8 },
   iconChip: {
     flex: 1,
@@ -578,27 +525,6 @@ const styles = StyleSheet.create({
     width: "48%",
   },
   poiLabel: { fontSize: 13, fontWeight: "500" },
-
-  poiCountRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  poiCountLabel: { fontSize: 14, fontWeight: "500" },
-  poiCountStepper: { flexDirection: "row", alignItems: "center", gap: 14 },
-  poiCountBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  poiCountValue: { fontSize: 17, fontWeight: "700", minWidth: 20, textAlign: "center" },
 
   distanceGroup: { gap: 8 },
   distChip: {

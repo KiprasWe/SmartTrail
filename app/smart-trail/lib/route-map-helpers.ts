@@ -86,13 +86,19 @@ export function poiDisplayName(
 
 export const ROUTE_COLORS = ["#16A34A", "#3B82F6", "#F59E0B"];
 
-export function formatDist(km: number) {
-  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+export function formatDistanceMeters(metres: number): string {
+  return metres < 1000
+    ? `${Math.round(metres)} m`
+    : `${(metres / 1000).toFixed(1)} km`;
 }
 
-export function formatTime(s: number) {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
+export function formatDistanceKm(km: number): string {
+  return formatDistanceMeters(km * 1000);
+}
+
+export function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
   return h > 0 ? `${h}h ${m}m` : `${m} min`;
 }
 
@@ -147,14 +153,6 @@ export function poiIcon(
   return "location-outline";
 }
 
-// Builds a URL pointing at our backend's Google Places photo proxy. The proxy
-// resolves the photoName to the actual image and 302-redirects, so the API key
-// never touches the client.
-export function placePhotoUrl(photoName: string) {
-  const base = process.env.EXPO_PUBLIC_API_URL;
-  return `${base}/places/photo?name=${encodeURIComponent(photoName)}`;
-}
-
 export async function openExternal(url?: string | null) {
   if (!url) return;
   try {
@@ -165,16 +163,17 @@ export async function openExternal(url?: string | null) {
   }
 }
 
-// Show a one-shot toast when the backend snapped the loop to its TSP minimum
-// or auto-extended past the slider value. Returns true if a toast fired.
+// Show a one-shot alert when the backend snapped the loop to its TSP minimum
+// or auto-extended past the slider value. Returns true if an alert fired.
 export function notifyLoopMeta(
   meta: LoopMeta | undefined | null,
   translate: (key: string, opts?: Record<string, string>) => string,
 ): boolean {
   if (!meta) return false;
+  const title = translate("route-map.loop-adjusted-title");
   if (meta.snapped_to_min && meta.min_distance_km != null) {
     Alert.alert(
-      "",
+      title,
       translate("route-map.loop-snapped-to-min", {
         km: meta.min_distance_km.toFixed(1),
       }),
@@ -183,7 +182,7 @@ export function notifyLoopMeta(
   }
   if (meta.auto_extended) {
     Alert.alert(
-      "",
+      title,
       translate("route-map.loop-auto-extended", {
         km: meta.actual_km.toFixed(1),
       }),
@@ -192,3 +191,4 @@ export function notifyLoopMeta(
   }
   return false;
 }
+

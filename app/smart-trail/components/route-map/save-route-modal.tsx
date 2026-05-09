@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import { modalStyles } from "./modal-styles";
 
 type Props = {
@@ -36,8 +36,6 @@ export function SaveRouteModal({
   onSave,
   colors: c,
 }: Props) {
-  const { t } = useTranslation();
-
   const handleBackdrop = () => {
     if (!saving) onClose();
   };

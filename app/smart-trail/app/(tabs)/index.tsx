@@ -1,4 +1,3 @@
-import { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,44 +11,22 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useNetwork } from "@/hooks/use-network";
-import type { ResolvedLocation } from "@/hooks/use-location-search";
+import { useGenerateForm } from "@/hooks/use-generate-form";
+import { useRouteGeneration } from "@/hooks/use-route-generation";
 import { LocationSearchSheet } from "@/components/generate/location-search-sheet";
 import { Colors } from "@/constants/theme";
-import { useTranslation } from "@/hooks/use-translation";
+import { t } from "@/lib/i18n";
 import { TabScreenHeader } from "@/components/ui/tab-screen-header";
-import {
-  OfflineScreen,
-  type TransportKey,
-  type ElevationKey,
-  type DistanceKey,
-} from "@/components/generate/route-form-components";
+import { OfflineScreen } from "@/components/generate/route-form-components";
 import { AtoBTab } from "@/components/generate/tabs/a-to-b-tab";
 import { RoundTripTab } from "@/components/generate/tabs/round-trip-tab";
 import { AiTab } from "@/components/generate/tabs/ai-tab";
-import type { MustStop } from "@/components/generate/stops-list";
-import { useRouteGeneration } from "@/hooks/use-route-generation";
 
-type TabKey = "a_to_b" | "round_trip" | "ai";
-
-// Which field is the search sheet targeting
-type SearchTarget =
-  | "start"
-  | "end"
-  | "round_start"
-  | "ai_start"
-  | "ai_end"
-  | { type: "stop"; id: string };
-
-const MODE_TABS: { key: TabKey; tKey: string }[] = [
+const MODE_TABS: { key: "a_to_b" | "round_trip" | "ai"; tKey: string }[] = [
   { key: "a_to_b", tKey: "generate.mode-atob" },
   { key: "round_trip", tKey: "generate.mode-round-trip" },
   { key: "ai", tKey: "generate.mode-ai" },
 ];
-
-function sameCoords(a: ResolvedLocation | null, b: ResolvedLocation | null) {
-  if (!a || !b) return false;
-  return a.coords.lat === b.coords.lat && a.coords.lng === b.coords.lng;
-}
 
 export default function GenerateScreen() {
   const { isOnline } = useNetwork();
@@ -57,173 +34,61 @@ export default function GenerateScreen() {
   const c = Colors[scheme];
   const insets = useSafeAreaInsets();
   const isDark = scheme === "dark";
-  const { t } = useTranslation();
 
-  const [tab, setTab] = useState<TabKey>("a_to_b");
-
-  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
-
-  // A→B
-  const [startLocation, setStartLocation] = useState<ResolvedLocation | null>(null);
-  const [endLocation, setEndLocation] = useState<ResolvedLocation | null>(null);
-
-  // Round trip
-  const [roundStartLocation, setRoundStartLocation] =
-    useState<ResolvedLocation | null>(null);
-
-  // AI
-  const [aiStartLocation, setAiStartLocation] = useState<ResolvedLocation | null>(null);
-  const [aiEndLocation, setAiEndLocation] = useState<ResolvedLocation | null>(null);
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [aiMode, setAiMode] = useState<"a_to_b" | "round_trip">("a_to_b");
-
-  // Shared must-stops
-  const [mustStops, setMustStops] = useState<MustStop[]>([]);
-
-  // Search sheet
-  const [searchTarget, setSearchTarget] = useState<SearchTarget | null>(null);
-  const sheetVisible = searchTarget !== null;
-
-  const openSearch = useCallback((target: SearchTarget) => {
-    setSearchTarget(target);
-  }, []);
-  const closeSearch = useCallback(() => setSearchTarget(null), []);
-
-  const handleLocationSelected = useCallback(
-    (location: ResolvedLocation) => {
-      if (!searchTarget) return;
-      setUserCoords(location.coords);
-
-      if (searchTarget === "start") {
-        if (sameCoords(endLocation, location)) {
-          setTab("round_trip");
-          setRoundStartLocation(location);
-          setStartLocation(null);
-          setEndLocation(null);
-        } else {
-          setStartLocation(location);
-        }
-      } else if (searchTarget === "end") {
-        if (sameCoords(startLocation, location)) {
-          setTab("round_trip");
-          setRoundStartLocation(location);
-          setStartLocation(null);
-          setEndLocation(null);
-        } else {
-          setEndLocation(location);
-        }
-      } else if (searchTarget === "round_start") setRoundStartLocation(location);
-      else if (searchTarget === "ai_start") {
-        setAiStartLocation(location);
-        if (aiMode === "a_to_b" && sameCoords(aiEndLocation, location)) {
-          setAiMode("round_trip");
-          setAiEndLocation(null);
-        }
-      } else if (searchTarget === "ai_end") {
-        if (aiMode === "a_to_b" && sameCoords(aiStartLocation, location)) {
-          setAiMode("round_trip");
-          setAiEndLocation(null);
-        } else {
-          setAiEndLocation(location);
-        }
-      } else if (typeof searchTarget === "object" && searchTarget.type === "stop") {
-        setMustStops((prev) =>
-          prev.map((s) => (s.id === searchTarget.id ? { ...s, location } : s)),
-        );
-      }
-    },
-    [searchTarget, startLocation, endLocation, aiMode, aiStartLocation, aiEndLocation],
-  );
-
-  const addStop = useCallback(() => {
-    setMustStops((prev) => [...prev, { id: Date.now().toString(), location: null }]);
-  }, []);
-  const removeStop = useCallback((id: string) => {
-    setMustStops((prev) => prev.filter((s) => s.id !== id));
-  }, []);
-  const clearStopLocation = useCallback((id: string) => {
-    setMustStops((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, location: null } : s)),
-    );
-  }, []);
-  const openStop = useCallback(
-    (id: string) => openSearch({ type: "stop", id }),
-    [openSearch],
-  );
-
-  // Form state
-  const [transport, setTransport] = useState<TransportKey>("foot-walking");
-  const [elevation, setElevation] = useState<ElevationKey>("auto");
-  const [selectedPoi, setSelectedPoi] = useState<Set<string>>(new Set());
-  const [poiCount, setPoiCount] = useState(3);
-  const [distance, setDistance] = useState<DistanceKey>("10");
-  const [customDistanceText, setCustomDistanceText] = useState("");
-
-  const togglePoi = useCallback((key: string) => {
-    setSelectedPoi((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }, []);
-
-  const customDistanceKm = parseFloat(customDistanceText);
-  const customDistanceValid =
-    distance !== "custom" ||
-    (!isNaN(customDistanceKm) && customDistanceKm >= 0.5 && customDistanceKm <= 100);
-  const canGenerate =
-    tab === "a_to_b"
-      ? !!startLocation && !!endLocation
-      : tab === "round_trip"
-        ? !!roundStartLocation && customDistanceValid
-        : !!aiStartLocation &&
-          aiPrompt.trim().length > 0 &&
-          (aiMode === "a_to_b" ? !!aiEndLocation : customDistanceValid);
-
+  const form = useGenerateForm();
   const { generate, generating, progressLabel } = useRouteGeneration();
 
-  const handleGenerate = useCallback(() => {
-    if (!canGenerate) return;
-    generate({
-      tab,
-      aiMode,
-      startLocation,
-      endLocation,
-      roundStartLocation,
-      aiStartLocation,
-      aiEndLocation,
-      aiPrompt,
-      mustStops,
-      transport,
-      elevation,
-      selectedPoi,
-      poiCount,
-      distance,
-      customDistanceText,
-    });
-  }, [
-    canGenerate,
-    generate,
-    tab,
-    aiMode,
-    startLocation,
-    endLocation,
-    roundStartLocation,
-    aiStartLocation,
-    aiEndLocation,
-    aiPrompt,
-    mustStops,
-    transport,
-    elevation,
-    selectedPoi,
-    poiCount,
-    distance,
-    customDistanceText,
-  ]);
+  const openSearch = (target: typeof form.searchTarget) =>
+    form.setSearchTarget(target);
+  const closeSearch = () => form.setSearchTarget(null);
+  const openStop = (id: string) => openSearch({ type: "stop", id });
 
+  const handleGenerate = () => {
+    if (!form.canGenerate) return;
+    generate({
+      tab: form.tab,
+      aiMode: form.aiMode,
+      startLocation: form.startLocation,
+      endLocation: form.endLocation,
+      roundStartLocation: form.roundStartLocation,
+      aiStartLocation: form.aiStartLocation,
+      aiEndLocation: form.aiEndLocation,
+      aiPrompt: form.aiPrompt,
+      mustStops: form.mustStops,
+      transport: form.transport,
+      elevation: form.elevation,
+      selectedPoi: form.selectedPoi,
+      poiCount: form.poiCount,
+      distance: form.distance,
+      customDistanceText: form.customDistanceText,
+    });
+  };
+
+  // Network status: explicit offline screen, brief loader during the initial
+  // probe (was previously a blank screen — bad UX on slow boots).
   if (isOnline === false) return <OfflineScreen />;
-  if (isOnline === null) return null;
+  if (isOnline === null) {
+    return (
+      <View
+        style={[
+          styles.root,
+          { backgroundColor: c.bg, alignItems: "center", justifyContent: "center" },
+        ]}
+      >
+        <ActivityIndicator color={c.tint} />
+      </View>
+    );
+  }
+
+  const searchPlaceholder = (() => {
+    const target = form.searchTarget;
+    if (target === "end" || target === "ai_end")
+      return t("generate.search-destination");
+    if (target === "round_start" || target === "ai_start")
+      return t("generate.search-start");
+    if (typeof target === "object") return t("generate.search-stop");
+    return t("generate.search-start");
+  })();
 
   return (
     <View style={[styles.root, { backgroundColor: c.bg }]}>
@@ -232,18 +97,29 @@ export default function GenerateScreen() {
       <TabScreenHeader
         title={t("generate.title")}
         footer={
-          <View style={[styles.modeBar, { backgroundColor: c.surface, borderColor: c.border }]}>
+          <View
+            style={[
+              styles.modeBar,
+              { backgroundColor: c.surface, borderColor: c.border },
+            ]}
+          >
             {MODE_TABS.map((m) => {
-              const active = tab === m.key;
+              const active = form.tab === m.key;
               return (
                 <TouchableOpacity
                   key={m.key}
-                  style={[styles.modeTab, active && { backgroundColor: c.tint }]}
-                  onPress={() => setTab(m.key)}
+                  style={[
+                    styles.modeTab,
+                    active && { backgroundColor: c.tint },
+                  ]}
+                  onPress={() => form.setTab(m.key)}
                   activeOpacity={0.72}
                 >
                   <Text
-                    style={[styles.modeTabText, { color: active ? "#fff" : c.muted }]}
+                    style={[
+                      styles.modeTabText,
+                      { color: active ? "#fff" : c.muted },
+                    ]}
                   >
                     {t(m.tKey)}
                   </Text>
@@ -255,85 +131,89 @@ export default function GenerateScreen() {
       />
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingBottom: insets.bottom + 100 },
+        ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
       >
-        {tab === "ai" ? (
+        {form.tab === "ai" ? (
           <AiTab
-            aiMode={aiMode}
+            aiMode={form.aiMode}
             onAiModeChange={(m) => {
-              setAiMode(m);
-              if (m === "round_trip") setAiEndLocation(null);
+              form.setAiMode(m);
+              if (m === "round_trip") form.setAiEndLocation(null);
             }}
-            startLocation={aiStartLocation}
-            endLocation={aiEndLocation}
+            startLocation={form.aiStartLocation}
+            endLocation={form.aiEndLocation}
             onOpenStart={() => openSearch("ai_start")}
             onOpenEnd={() => openSearch("ai_end")}
-            onClearStart={() => setAiStartLocation(null)}
-            onClearEnd={() => setAiEndLocation(null)}
-            mustStops={mustStops}
+            onClearStart={() => form.setAiStartLocation(null)}
+            onClearEnd={() => form.setAiEndLocation(null)}
+            mustStops={form.mustStops}
             onOpenStop={openStop}
-            onClearStopLocation={clearStopLocation}
-            onRemoveStop={removeStop}
-            onAddStop={addStop}
-            prompt={aiPrompt}
-            onPromptChange={setAiPrompt}
-            distance={distance}
-            onDistanceChange={setDistance}
-            customDistanceText={customDistanceText}
-            onCustomDistanceChange={setCustomDistanceText}
-            transport={transport}
-            onTransportChange={setTransport}
-            elevation={elevation}
-            onElevationChange={setElevation}
+            onClearStopLocation={form.clearStopLocation}
+            onRemoveStop={form.removeStop}
+            onAddStop={form.addStop}
+            prompt={form.aiPrompt}
+            onPromptChange={form.setAiPrompt}
+            distance={form.distance}
+            onDistanceChange={form.setDistance}
+            customDistanceText={form.customDistanceText}
+            onCustomDistanceChange={form.setCustomDistanceText}
+            transport={form.transport}
+            onTransportChange={form.setTransport}
+            elevation={form.elevation}
+            onElevationChange={form.setElevation}
             colors={c}
           />
-        ) : tab === "a_to_b" ? (
+        ) : form.tab === "a_to_b" ? (
           <AtoBTab
-            startLocation={startLocation}
-            endLocation={endLocation}
+            startLocation={form.startLocation}
+            endLocation={form.endLocation}
             onOpenStart={() => openSearch("start")}
             onOpenEnd={() => openSearch("end")}
-            onClearStart={() => setStartLocation(null)}
-            onClearEnd={() => setEndLocation(null)}
-            mustStops={mustStops}
+            onClearStart={() => form.setStartLocation(null)}
+            onClearEnd={() => form.setEndLocation(null)}
+            mustStops={form.mustStops}
             onOpenStop={openStop}
-            onRemoveStop={removeStop}
-            onAddStop={addStop}
-            transport={transport}
-            onTransportChange={setTransport}
-            elevation={elevation}
-            onElevationChange={setElevation}
-            selectedPoi={selectedPoi}
-            onTogglePoi={togglePoi}
-            poiCount={poiCount}
-            onPoiCountChange={setPoiCount}
+            onClearStopLocation={form.clearStopLocation}
+            onRemoveStop={form.removeStop}
+            onAddStop={form.addStop}
+            transport={form.transport}
+            onTransportChange={form.setTransport}
+            elevation={form.elevation}
+            onElevationChange={form.setElevation}
+            selectedPoi={form.selectedPoi}
+            onTogglePoi={form.togglePoi}
+            poiCount={form.poiCount}
+            onPoiCountChange={form.setPoiCount}
             colors={c}
           />
         ) : (
           <RoundTripTab
-            startLocation={roundStartLocation}
+            startLocation={form.roundStartLocation}
             onOpenStart={() => openSearch("round_start")}
-            onClearStart={() => setRoundStartLocation(null)}
-            mustStops={mustStops}
+            onClearStart={() => form.setRoundStartLocation(null)}
+            mustStops={form.mustStops}
             onOpenStop={openStop}
-            onClearStopLocation={clearStopLocation}
-            onRemoveStop={removeStop}
-            onAddStop={addStop}
-            distance={distance}
-            onDistanceChange={setDistance}
-            customDistanceText={customDistanceText}
-            onCustomDistanceChange={setCustomDistanceText}
-            transport={transport}
-            onTransportChange={setTransport}
-            elevation={elevation}
-            onElevationChange={setElevation}
-            selectedPoi={selectedPoi}
-            onTogglePoi={togglePoi}
-            poiCount={poiCount}
-            onPoiCountChange={setPoiCount}
+            onClearStopLocation={form.clearStopLocation}
+            onRemoveStop={form.removeStop}
+            onAddStop={form.addStop}
+            distance={form.distance}
+            onDistanceChange={form.setDistance}
+            customDistanceText={form.customDistanceText}
+            onCustomDistanceChange={form.setCustomDistanceText}
+            transport={form.transport}
+            onTransportChange={form.setTransport}
+            elevation={form.elevation}
+            onElevationChange={form.setElevation}
+            selectedPoi={form.selectedPoi}
+            onTogglePoi={form.togglePoi}
+            poiCount={form.poiCount}
+            onPoiCountChange={form.setPoiCount}
             colors={c}
           />
         )}
@@ -342,7 +222,11 @@ export default function GenerateScreen() {
       <View
         style={[
           styles.footer,
-          { backgroundColor: c.bg, borderTopColor: c.border, paddingBottom: 10 },
+          {
+            backgroundColor: c.bg,
+            borderTopColor: c.border,
+            paddingBottom: 10,
+          },
         ]}
       >
         <TouchableOpacity
@@ -350,11 +234,11 @@ export default function GenerateScreen() {
             styles.generateBtn,
             {
               backgroundColor: c.tint,
-              opacity: canGenerate && !generating ? 1 : 0.36,
+              opacity: form.canGenerate && !generating ? 1 : 0.36,
             },
           ]}
           activeOpacity={0.84}
-          disabled={!canGenerate || generating}
+          disabled={!form.canGenerate || generating}
           onPress={handleGenerate}
         >
           <View style={styles.btnInner}>
@@ -378,18 +262,10 @@ export default function GenerateScreen() {
       </View>
 
       <LocationSearchSheet
-        visible={sheetVisible}
-        placeholder={
-          searchTarget === "end" || searchTarget === "ai_end"
-            ? t("generate.search-destination")
-            : searchTarget === "round_start" || searchTarget === "ai_start"
-              ? t("generate.search-start")
-              : typeof searchTarget === "object"
-                ? t("generate.search-stop")
-                : t("generate.search-start")
-        }
-        userCoords={userCoords}
-        onSelect={handleLocationSelected}
+        visible={form.sheetVisible}
+        placeholder={searchPlaceholder}
+        userCoords={form.userCoords}
+        onSelect={form.handleLocationSelected}
         onClose={closeSearch}
       />
     </View>

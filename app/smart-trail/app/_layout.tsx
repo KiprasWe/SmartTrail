@@ -34,9 +34,7 @@ function RootLayoutNav() {
         useSavedRoutesStore.getState().bootstrap();
       }
     });
-    // bootstrap* are stable Zustand action references; we only want this
-    // effect to run once on mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, []);
 
   if (isLoading) {

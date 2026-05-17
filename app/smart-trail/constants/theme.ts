@@ -9,7 +9,7 @@ export const Colors = {
     tint: "#16A34A",
     border: "#E4E4E7",
     danger: "#DC2626",
-    // tab bar compat
+    
     background: "#FFFFFF",
     icon: "#71717A",
     tabIconDefault: "#71717A",
@@ -23,7 +23,7 @@ export const Colors = {
     tint: "#4ADE80",
     border: "#27272A",
     danger: "#F87171",
-    // tab bar compat
+    
     background: "#09090B",
     icon: "#A1A1AA",
     tabIconDefault: "#A1A1AA",

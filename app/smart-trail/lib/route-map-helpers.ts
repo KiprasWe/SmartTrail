@@ -2,7 +2,6 @@ import { Alert, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { LoopMeta } from "@/types/route";
 
-// Maps normalised category strings (lowercase, underscores→spaces) to i18n keys
 const CATEGORY_KEY_MAP: Record<string, string> = {
   park: "park",
   "national park": "national_park",
@@ -71,8 +70,6 @@ export function translatePoiCategory(
   return t(`poi.categories.${key}`);
 }
 
-// Returns the display name for a POI — translates the name if it's just a
-// raw category label (unnamed OSM place), otherwise returns the real name.
 export function poiDisplayName(
   name: string | null | undefined,
   category: string | null | undefined,
@@ -159,17 +156,19 @@ export async function openExternal(url?: string | null) {
     const can = await Linking.canOpenURL(url);
     if (can) await Linking.openURL(url);
   } catch {
-    // ignore
+    
   }
 }
 
-// Show a one-shot alert when the backend snapped the loop to its TSP minimum
-// or auto-extended past the slider value. Returns true if an alert fired.
 export function notifyLoopMeta(
   meta: LoopMeta | undefined | null,
   translate: (key: string, opts?: Record<string, string>) => string,
 ): boolean {
   if (!meta) return false;
+  const LOOP_ADJUST_NOTIFY_THRESHOLD_KM = 10;
+  const exceedsThreshold =
+    meta.actual_km - meta.requested_km > LOOP_ADJUST_NOTIFY_THRESHOLD_KM;
+  if (!exceedsThreshold) return false;
   const title = translate("route-map.loop-adjusted-title");
   if (meta.snapped_to_min && meta.min_distance_km != null) {
     Alert.alert(
@@ -191,4 +190,3 @@ export function notifyLoopMeta(
   }
   return false;
 }
-

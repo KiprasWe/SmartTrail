@@ -22,7 +22,6 @@ import { Colors } from "@/constants/theme";
 import { resolveErr } from "@/lib/error-messages";
 import { t } from "@/lib/i18n";
 
-// RFC 5322-light: tolerant enough for typos, strict enough to catch obvious junk.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function AuthScreen() {
@@ -41,8 +40,6 @@ export default function AuthScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [googleLoad, setGoogleLoad] = useState(false);
 
-  // Themed input style — derived once per scheme rather than duplicating across
-  // four <TextInput>s.
   const inputStyle = useMemo<TextStyle[]>(
     () => [
       styles.input,
@@ -68,7 +65,6 @@ export default function AuthScreen() {
     const trimmedEmail = email.trim();
     const trimmedUsername = username.trim();
 
-    // Required-field guard — unchanged behaviour, just centralised.
     if (isSignUp) {
       if (
         !trimmedUsername ||

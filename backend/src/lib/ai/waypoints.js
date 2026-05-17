@@ -1,13 +1,9 @@
-// lib/ai/waypoints.js — waypoint shaping helpers used by the pipeline.
-//
-//   sortPoisAlongLine    — project POIs onto start→end line for A→B ordering
-//   sortPoisAroundLoop   — greedy nearest-neighbour ordering for loops
-//   enrichedPoiToFeature — convert internal POI to GeoJSON feature for client
-//   fetchORSWithFallback — ORS directions with per-waypoint dropout fallback
-
 import { haversineM } from "../geo.js";
 import { fetchORSDirections } from "../ors.js";
 
+// Exported. Used by pipeline.js (A→B trips).
+// Orders POIs by their projection onto the start->end line so stops
+// progress naturally from origin to destination.
 export function sortPoisAlongLine(pois, start, end) {
   const [sx, sy] = start;
   const dx = end[0] - sx,
@@ -19,6 +15,9 @@ export function sortPoisAlongLine(pois, start, end) {
     .map(({ p }) => p);
 }
 
+// Exported. Used by pipeline.js (loop trips).
+// Greedy nearest-neighbor order from `start` — a sane visit sequence for
+// loop stops before routing.
 export function sortPoisAroundLoop(pois, start) {
   if (pois.length <= 1) return [...pois];
   const remaining = [...pois];
@@ -28,7 +27,10 @@ export function sortPoisAroundLoop(pois, start) {
     let bestIdx = 0,
       bestDist = Infinity;
     for (let i = 0; i < remaining.length; i++) {
-      const d = haversineM([curLng, curLat], [remaining[i].lng, remaining[i].lat]);
+      const d = haversineM(
+        [curLng, curLat],
+        [remaining[i].lng, remaining[i].lat],
+      );
       if (d < bestDist) {
         bestDist = d;
         bestIdx = i;
@@ -42,6 +44,9 @@ export function sortPoisAroundLoop(pois, start) {
   return sorted;
 }
 
+// Exported. Used by pipeline.js.
+// Maps an internal enriched POI into the GeoJSON Point feature shape the
+// API/frontend consumes.
 export function enrichedPoiToFeature(poi, i) {
   return {
     type: "Feature",
@@ -52,7 +57,8 @@ export function enrichedPoiToFeature(poi, i) {
       category: poi.primary_type ?? poi.types?.[0] ?? null,
       distance_from_route: 0,
       guide_note: poi.guide_note ?? null,
-      ai_description: poi.guide_note ?? poi.editorial_summary ?? poi.description ?? null,
+      ai_description:
+        poi.guide_note ?? poi.editorial_summary ?? poi.description ?? null,
       essential: poi.essential ?? false,
       rating: poi.rating,
       user_rating_count: poi.user_rating_count,
@@ -67,9 +73,9 @@ export function enrichedPoiToFeature(poi, i) {
   };
 }
 
-// ORS directions with per-waypoint dropout fallback.
-// If ORS rejects a waypoint as unroutable, drops it and retries.
-// protectedCount prevents dropping user/named anchors.
+// Exported. Used by pipeline.js (A→B routing).
+// Routes start->mids->end via ORS; on an ORS 2010 "unroutable coordinate"
+// error it drops that waypoint (never a protected one) and retries.
 export async function fetchORSWithFallback(
   orsProfile,
   startCoord,
@@ -97,8 +103,11 @@ export async function fetchORSWithFallback(
       if (!match) throw err;
       const absIdx = parseInt(match[1], 10);
       const wpIdx = absIdx - 1;
-      if (wpIdx < 0 || wpIdx >= waypoints.length || wpIdx < protectedCount) throw err;
-      console.warn(`[aiRouting] ORS 2010: dropping unroutable waypoint at position ${absIdx}`);
+      if (wpIdx < 0 || wpIdx >= waypoints.length || wpIdx < protectedCount)
+        throw err;
+      console.warn(
+        `[aiRouting] ORS 2010: dropping unroutable waypoint at position ${absIdx}`,
+      );
       waypoints = waypoints.filter((_, i) => i !== wpIdx);
       if (!waypoints.length) throw err;
     }

@@ -1,21 +1,20 @@
-// lib/ai/grounding.js — Maps-grounded named place resolution.
-//
-// Uses Gemini with Google Maps grounding to get accurate coordinates
-// for named places the user requested.
-
 import { genai, GEMINI_MODEL, extractJsonArray } from "./shared.js";
-import { createAiTrace } from "./trace.js";
 
 const GROUNDING_SYSTEM =
   "You are a geographic assistant. Use Google Maps to find the exact coordinates of requested places. " +
   "Return only valid JSON — no explanation, no markdown, no extra text.";
 
+// Used by resolveNamedPlacesWithGrounding.
+// Coerces n to a finite number clamped to [lo, hi] (lo on non-finite).
 function clamp(n, lo, hi) {
   const x = Number(n);
   if (!Number.isFinite(x)) return lo;
   return Math.max(lo, Math.min(hi, x));
 }
 
+// Used by resolveNamedPlacesWithGrounding.
+// Validates a [minLng,minLat,maxLng,maxLat] bbox into a named hint object
+// (or null) for constraining Maps results.
 function bboxToHint(bbox) {
   if (!Array.isArray(bbox) || bbox.length !== 4) return null;
   const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
@@ -23,6 +22,9 @@ function bboxToHint(bbox) {
   return { minLng, minLat, maxLng, maxLat };
 }
 
+// Used by resolveNamedPlacesWithGrounding.
+// Normalizes a Maps grounding candidate into our POI shape (essential +
+// _userNamed); returns null if it lacks valid coords/name.
 function toPoiFromMaps(item) {
   const lat = Number(item.lat);
   const lng = Number(item.lng);
@@ -49,7 +51,9 @@ function toPoiFromMaps(item) {
     primary_type: "tourist_attraction",
     types: ["tourist_attraction"],
     formatted_address:
-      typeof item.address === "string" ? item.address.trim().slice(0, 180) : null,
+      typeof item.address === "string"
+        ? item.address.trim().slice(0, 180)
+        : null,
     description: null,
     editorial_summary: null,
     rating: null,
@@ -63,14 +67,20 @@ function toPoiFromMaps(item) {
   };
 }
 
-export async function resolveNamedPlacesWithGrounding(namedPlaces, start, langOrOpts = "en") {
+// Exported — module entry point. Used by ai/pipeline.js.
+// Resolves user-named places to coordinates via a Gemini + Google Maps
+// grounding call, returning them as user-named POIs (empty [] on failure).
+export async function resolveNamedPlacesWithGrounding(
+  namedPlaces,
+  start,
+  langOrOpts = "en",
+) {
   if (!genai || !namedPlaces.length) return [];
 
   const opts =
     langOrOpts && typeof langOrOpts === "object"
       ? langOrOpts
       : { lang: langOrOpts };
-  const trace = opts.trace ?? createAiTrace({ enabled: false });
   const maxCandidates = clamp(opts.maxCandidates ?? 2, 1, 4);
   const bboxHint = bboxToHint(opts.bbox);
 
@@ -113,17 +123,32 @@ export async function resolveNamedPlacesWithGrounding(namedPlaces, start, langOr
       },
     });
 
-    const parsed = extractJsonArray(r.text ?? "");
+    const rawText = r.text ?? "";
+    console.log(
+      `[grounding] Query: [${namedPlaces.join(", ")}] | raw response (${rawText.length} chars): ${
+        rawText.trim() ? JSON.stringify(rawText.slice(0, 1000)) : "(empty)"
+      }`,
+    );
+
+    const parsed = extractJsonArray(rawText);
     if (!Array.isArray(parsed) || !parsed.length) {
-      console.warn("[grounding] No valid JSON array in Maps grounding response");
+      console.warn(
+        `[grounding] No valid JSON array in Maps grounding response — parsed=${JSON.stringify(parsed)}`,
+      );
       return [];
     }
+
+    console.log(
+      `[grounding] Parsed ${parsed.length} row(s): ${JSON.stringify(parsed).slice(0, 1000)}`,
+    );
 
     const rows = parsed
       .filter((row) => row && typeof row === "object")
       .map((row) => {
         const candidates = Array.isArray(row.candidates) ? row.candidates : [];
-        return candidates.filter((c) => c && typeof c === "object").slice(0, maxCandidates);
+        return candidates
+          .filter((c) => c && typeof c === "object")
+          .slice(0, maxCandidates);
       })
       .flat();
 
@@ -133,14 +158,11 @@ export async function resolveNamedPlacesWithGrounding(namedPlaces, start, langOr
 
     const pois = rows.map(toPoiFromMaps).filter(Boolean);
 
-    trace.summary("named_place_grounding", {
-      queries: namedPlaces,
-      maxCandidates,
-      bbox_hint: bboxHint ?? null,
-      candidates_flat_count: rows.length,
-      resolved_pois_count: pois.length,
-      resolved_names: pois.map((p) => p.name),
-    });
+    if (pois.length < rows.length) {
+      console.warn(
+        `[grounding] ${rows.length - pois.length}/${rows.length} candidate(s) dropped by toPoiFromMaps (missing/invalid lat-lng). Raw candidates: ${JSON.stringify(rows).slice(0, 1000)}`,
+      );
+    }
 
     console.log(
       `[grounding] Resolved ${pois.length} POIs: ${pois.map((p) => p.name).join(", ") || "(none)"}`,

@@ -16,14 +16,10 @@ type Props = {
   pois: PoiFeature[];
   isDark: boolean;
   mapReady: boolean;
-  /** Called when the user taps a POI marker on the map. */
+  
   onSelectPoi: (poi: PoiFeature) => void;
 };
 
-/**
- * All MapLibre layers for the route map: route polylines, start/end/loop
- * markers, and POI circles + labels. Pure presentation — owns no state.
- */
 export function RouteLayers({
   routes,
   selectedIndex,
@@ -37,8 +33,8 @@ export function RouteLayers({
 
   const startEndGeoJSON = useMemo(() => {
     if (!variant || !mapReady) return null;
-    const coords = variant.geometry.coordinates;
-    if (!coords.length) return null;
+    const coords = variant.geometry?.coordinates;
+    if (!coords?.length) return null;
     const startCoord = coords[0] as Coords;
     const endCoord = coords[coords.length - 1] as Coords;
     if (isLoop) {
@@ -87,7 +83,8 @@ export function RouteLayers({
 
   return (
     <>
-      {routes.map((r, i) => (
+      {routes.map((r, i) =>
+        !r.geometry?.coordinates?.length ? null : (
         <ShapeSource
           key={`route-${i}`}
           id={`route-source-${i}`}

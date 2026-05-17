@@ -1,11 +1,4 @@
-// Offline-first cache of the user's saved routes. List items live in one
-// AsyncStorage key; full route details (geometry + POIs) live under per-id
-// keys so that opening a saved route works without network.
-//
-// Flow:
-//   1. bootstrap() — hydrate list from AsyncStorage immediately (no await UI)
-//   2. refresh()   — hit GET /routes/saved when online, overwrite cache
-//   3. save/update/delete — optimistic, roll back on failure
+
 
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -51,9 +44,8 @@ const persistList = (routes: SavedRouteListItem[]) =>
   AsyncStorage.setItem(LIST_KEY, JSON.stringify(routes)).catch(() => {});
 
 const toListItem = (r: SavedRoute): SavedRouteListItem => {
-  // Strip heavy fields from a full route to produce the list-cache shape.
-  const { geometry, instructions, elevationProfile, aiPlan, pois, generationId, ...rest } =
-    r;
+  
+  const { geometry, elevationProfile, aiPlan, pois, generationId, ...rest } = r;
   return rest;
 };
 
@@ -78,14 +70,14 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
         set({ routes: cached, loading: false });
       }
     } catch {}
-    // Fire-and-forget network refresh — UI already has cached data
+    
     get().refresh().catch(() => {});
   },
 
   refresh: async () => {
     const { authFetch } = useAuthStore.getState();
     const hadList = get().routes.length > 0;
-    // Background refresh: keep showing cached list without toggling loading.
+    
     if (!hadList) set({ loading: true, error: null });
     try {
       const { data } = await authFetch("/routes/saved");
@@ -93,7 +85,7 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
       set({ routes });
       persistList(routes);
     } catch (err: unknown) {
-      // Stay on cached data — no throw, offline is a valid state
+      
       set({ error: resolveErr(err) });
     } finally {
       set({ loading: false });
@@ -119,12 +111,12 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
   },
 
   getById: async (id) => {
-    // Try cache first — this is what makes offline viewing work
+    
     try {
       const raw = await AsyncStorage.getItem(DETAIL_KEY(id));
       if (raw) {
         const cached: SavedRoute = JSON.parse(raw);
-        // Kick off a background refresh but return the cached copy immediately
+        
         (async () => {
           try {
             const { authFetch } = useAuthStore.getState();
@@ -139,7 +131,6 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
       }
     } catch {}
 
-    // No cache — must go to network
     try {
       const { authFetch } = useAuthStore.getState();
       const { data } = await authFetch(`/routes/saved/${id}`);
@@ -155,7 +146,7 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
 
   update: async (id, patch) => {
     const prev = get().routes;
-    // Optimistic update
+    
     set({
       routes: prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
     });
@@ -177,7 +168,7 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
         () => {},
       );
     } catch (err) {
-      // Roll back
+      
       set({ routes: prev });
       persistList(prev);
       throw err;
@@ -202,7 +193,6 @@ export const useSavedRoutesStore = create<SavedRoutesStore>((set, get) => ({
   },
 }));
 
-// Clear all cached route data whenever the user signs out.
 useAuthStore.subscribe((state, prevState) => {
   if (prevState.user !== null && state.user === null) {
     useSavedRoutesStore.getState().clear();

@@ -78,7 +78,15 @@
       "PowerShell(New-Item *)",
       "Bash(Select-String -Pattern \"\\(constant|config|category\\)\" -List)",
       "Bash(dir \"C:\\\\Users\\\\kipra\\\\Desktop\\\\New folder\\\\SmartTrail\\\\backend\\\\src\" -Recurse -Filter \"*.js\")",
-      "Bash(Select-Object -First 30)"
+      "Bash(Select-Object -First 30)",
+      "Bash(del *)",
+      "PowerShell(npm install *)",
+      "PowerShell(npx vitest run src/__tests__/controllers 2>&1 | Select-Object -Last 60)",
+      "Bash(npx vitest *)",
+      "Bash(npx eslint *)",
+      "Bash(npm test *)",
+      "Bash(sort -t: -k1)",
+      "Bash(npx jest *)"
     ]
   },
   "enabledPlugins": {

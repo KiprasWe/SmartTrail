@@ -1,7 +1,7 @@
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 
-type Coords = [number, number]; // [lng, lat]
+type Coords = [number, number]; 
 
 export interface GpxWaypoint {
   name: string;

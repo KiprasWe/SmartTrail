@@ -64,8 +64,6 @@ export default function GenerateScreen() {
     });
   };
 
-  // Network status: explicit offline screen, brief loader during the initial
-  // probe (was previously a blank screen — bad UX on slow boots).
   if (isOnline === false) return <OfflineScreen />;
   if (isOnline === null) {
     return (

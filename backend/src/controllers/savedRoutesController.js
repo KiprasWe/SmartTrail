@@ -41,7 +41,9 @@ export const saveRoute = asyncHandler(async (req, res) => {
       NOW(),
       NOW()
     )
-    RETURNING id, "userId", title, description, transport, distance, duration, ascent, descent, bbox, "elevationProfile", pois, "createdAt", "updatedAt"
+    RETURNING id, "userId", title, description, transport, distance, duration, ascent, descent,
+              ST_AsGeoJSON(geometry)::json as geometry,
+              bbox, "elevationProfile", pois, "createdAt", "updatedAt"
   `;
 
   return sendSuccess(res, Success.ROUTE_SAVED, { route });

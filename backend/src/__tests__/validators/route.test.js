@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   atoBSchema,
   loopSchema,
-  aiRouteSchema,
+  aiDirectSchema,
+  aiLoopSchema,
   saveRouteSchema,
   updateRouteSchema,
 } from "../../validators/routeValidators.js";
@@ -107,26 +108,20 @@ describe("loopSchema", () => {
   });
 });
 
-describe("aiRouteSchema", () => {
+describe("aiDirectSchema", () => {
   it("accepts start + end", () => {
     expect(
-      aiRouteSchema.safeParse({ start: vilnius, end: kaunas }).success,
+      aiDirectSchema.safeParse({ start: vilnius, end: kaunas }).success,
     ).toBe(true);
   });
 
-  it("accepts start + distance", () => {
-    expect(
-      aiRouteSchema.safeParse({ start: vilnius, distance: 5000 }).success,
-    ).toBe(true);
-  });
-
-  it("rejects start alone (no end or distance)", () => {
-    expect(aiRouteSchema.safeParse({ start: vilnius }).success).toBe(false);
+  it("rejects start alone (end required)", () => {
+    expect(aiDirectSchema.safeParse({ start: vilnius }).success).toBe(false);
   });
 
   it("rejects area longer than 200 characters", () => {
     expect(
-      aiRouteSchema.safeParse({
+      aiDirectSchema.safeParse({
         start: vilnius,
         end: kaunas,
         area: "a".repeat(201),
@@ -136,7 +131,7 @@ describe("aiRouteSchema", () => {
 
   it("rejects preferences longer than 500 characters", () => {
     expect(
-      aiRouteSchema.safeParse({
+      aiDirectSchema.safeParse({
         start: vilnius,
         end: kaunas,
         preferences: "a".repeat(501),
@@ -146,20 +141,44 @@ describe("aiRouteSchema", () => {
 
   it("rejects unsupported lang", () => {
     expect(
-      aiRouteSchema.safeParse({ start: vilnius, end: kaunas, lang: "de" })
+      aiDirectSchema.safeParse({ start: vilnius, end: kaunas, lang: "de" })
         .success,
     ).toBe(false);
   });
 
   it("accepts lang 'lt'", () => {
     expect(
-      aiRouteSchema.safeParse({ start: vilnius, end: kaunas, lang: "lt" })
+      aiDirectSchema.safeParse({ start: vilnius, end: kaunas, lang: "lt" })
         .success,
     ).toBe(true);
   });
 
   it("applies default profile and lang", () => {
-    const { data } = aiRouteSchema.safeParse({ start: vilnius, end: kaunas });
+    const { data } = aiDirectSchema.safeParse({ start: vilnius, end: kaunas });
+    expect(data.profile).toBe("foot-walking");
+    expect(data.lang).toBe("en");
+  });
+});
+
+describe("aiLoopSchema", () => {
+  it("accepts start + distance", () => {
+    expect(
+      aiLoopSchema.safeParse({ start: vilnius, distance: 5000 }).success,
+    ).toBe(true);
+  });
+
+  it("rejects start alone (distance required)", () => {
+    expect(aiLoopSchema.safeParse({ start: vilnius }).success).toBe(false);
+  });
+
+  it("rejects distance below 500", () => {
+    expect(
+      aiLoopSchema.safeParse({ start: vilnius, distance: 100 }).success,
+    ).toBe(false);
+  });
+
+  it("applies default profile and lang", () => {
+    const { data } = aiLoopSchema.safeParse({ start: vilnius, distance: 5000 });
     expect(data.profile).toBe("foot-walking");
     expect(data.lang).toBe("en");
   });

@@ -1,19 +1,21 @@
 import { fetchWithRetry, fetchWithTimeout } from "../utils/http.js";
 import { thinCoords, haversineM } from "./geo.js";
+import {
+  TIMEOUT_ROUTING_MS,
+  ORS_POI_CHUNK_SIZE,
+  ORS_POI_MAX_GROUPS_PER_REQ,
+  ORS_MATRIX_BATCH,
+} from "../config/tuning.js";
+import {
+  ORS_API_KEY,
+  ORS_POIS_URL,
+  ORS_DIRECTIONS_URL,
+  ORS_MATRIX_URL,
+} from "../config/env.js";
 
-const ORS_API_KEY = process.env.ORS_API_KEY;
-const ORS_VERBOSE = process.env.ORS_VERBOSE === "1";
-const orsLog = (...args) => {
-  if (ORS_VERBOSE) console.log(...args);
-};
-
-export const ORS_POIS_URL = "https://api.heigit.org/openpoiservice/v0/pois";
-export const ORS_DIRECTIONS_URL =
-  "https://api.heigit.org/openrouteservice/v2/directions";
-export const ORS_MATRIX_URL = "https://api.openrouteservice.org/v2/matrix";
-
-const TIMEOUT_ROUTING_MS = 20_000;
-
+// Exported. Used by routeController, routeEditController, loop-algo, poi-splice, ai/waypoints.
+// Core routing call: POSTs coordinates to the ORS directions API and returns
+// the raw GeoJSON response (one route through the given points).
 export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
   if (!ORS_API_KEY) throw new Error("ORS_API_KEY is not set");
 
@@ -25,7 +27,7 @@ export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
   const body = {
     coordinates,
     elevation: true,
-    instructions: true,
+    instructions: false,
     ...(opts.preference && { preference: opts.preference }),
     ...(opts.alternativeRoutes && {
       alternative_routes: opts.alternativeRoutes,
@@ -63,6 +65,9 @@ export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
   return res.json();
 }
 
+// Exported. Used by routeController, routeEditController, loop-algo, poi-splice, ai/pipeline.
+// Normalizes a raw ORS GeoJSON feature into the app's routeData shape
+// (coords, elevation array, distance/duration/ascent/descent).
 export function orsFeatureToRouteData(feature) {
   const rawCoords = feature.geometry.coordinates;
   const coords = rawCoords.map((c) => [c[0], c[1]]);
@@ -70,14 +75,6 @@ export function orsFeatureToRouteData(feature) {
 
   const props = feature.properties ?? {};
   const segments = props.segments ?? [];
-  const maneuvers = segments
-    .flatMap((seg) => seg.steps ?? [])
-    .map((s) => ({
-      instruction: s.instruction ?? "",
-      type: s.type ?? 0,
-      distance_km: +((s.distance ?? 0) / 1000).toFixed(3),
-      duration_s: Math.round(s.duration ?? 0),
-    }));
 
   const distance_m =
     props.summary?.distance ??
@@ -95,7 +92,6 @@ export function orsFeatureToRouteData(feature) {
   return {
     coords,
     elevArr,
-    maneuvers,
     distance_km: +(distance_m / 1000).toFixed(2),
     duration_s: Math.round(duration_s),
     ascent_m,
@@ -103,27 +99,27 @@ export function orsFeatureToRouteData(feature) {
   };
 }
 
+// Exported, but currently only consumed internally by buildProfileOpts.
+// Maps an elevation preference (flat/moderate/hilly) to ORS request options —
+// steepness weightings for cycling, avoid-features for walking.
 export function buildORSElevationOpts(elevPref, orsProfile = "") {
   const isCycling = orsProfile.startsWith("cycling");
 
   if (elevPref === "flat") {
     if (isCycling)
-      // steepness_difficulty 0 = Novice — ORS routes away from steep roads
       return { profileParams: { weightings: { steepness_difficulty: 0 } } };
-    // Foot/running: avoid steps (literal stair segments = elevation changes)
+
     return { options: { avoid_features: ["steps"] } };
   }
 
   if (elevPref === "moderate") {
     if (isCycling)
-      // steepness_difficulty 1 = Moderate — balanced gradient preference
       return { profileParams: { weightings: { steepness_difficulty: 1 } } };
     return {};
   }
 
   if (elevPref === "hilly") {
     if (isCycling)
-      // steepness_difficulty 3 = Pro — ORS prefers steeper gradients
       return { profileParams: { weightings: { steepness_difficulty: 3 } } };
     return {};
   }
@@ -131,32 +127,77 @@ export function buildORSElevationOpts(elevPref, orsProfile = "") {
   return {};
 }
 
-const ORS_POI_CHUNK_SIZE = 40;
+// Exported. Used by routeController, routeEditController, ai/pipeline.
+// Merges a profile's base config with elevation-preference options into the
+// final ORS opts object (preference + avoid_features + weightings).
+export function buildProfileOpts(profileConfig, elevPref) {
+  const elevOpts = buildORSElevationOpts(elevPref, profileConfig.orsProfile);
+  const avoidFeatures = [
+    ...(profileConfig.options?.avoid_features ?? []),
+    ...(elevOpts.options?.avoid_features ?? []),
+  ];
+  const weightings = {
+    ...(profileConfig.profileParams?.weightings ?? {}),
+    ...(elevOpts.profileParams?.weightings ?? {}),
+  };
+  return {
+    ...(profileConfig.preference && { preference: profileConfig.preference }),
+    ...(avoidFeatures.length > 0 && {
+      options: { avoid_features: avoidFeatures },
+    }),
+    ...(Object.keys(weightings).length > 0 && {
+      profileParams: { weightings },
+    }),
+  };
+}
 
+// Exported. Used by poi-select.js (fetchPoiFeatures).
+// Queries the ORS POI service along a route corridor, chunking the polyline
+// and category groups across parallel requests and de-duping by OSM id.
 export async function fetchRoutePois(
   routeCoords,
   { groupIds = [], categoryIds = [] } = {},
   bufferM = 300,
 ) {
-  if (!ORS_API_KEY || !routeCoords?.length || (!groupIds.length && !categoryIds.length))
+  if (
+    !ORS_API_KEY ||
+    !routeCoords?.length ||
+    (!groupIds.length && !categoryIds.length)
+  )
     return [];
   const thinned = thinCoords(routeCoords, 150);
 
-  const chunks = [];
+  const lineChunks = [];
   for (let i = 0; i < thinned.length; i += ORS_POI_CHUNK_SIZE - 1) {
-    chunks.push(thinned.slice(i, i + ORS_POI_CHUNK_SIZE));
+    lineChunks.push(thinned.slice(i, i + ORS_POI_CHUNK_SIZE));
   }
 
-  const filters = {};
-  if (groupIds.length) filters.category_group_ids = groupIds;
-  if (categoryIds.length) filters.category_ids = categoryIds;
+  const groupChunks = [];
+  if (groupIds.length) {
+    for (let i = 0; i < groupIds.length; i += ORS_POI_MAX_GROUPS_PER_REQ) {
+      groupChunks.push(groupIds.slice(i, i + ORS_POI_MAX_GROUPS_PER_REQ));
+    }
+  } else {
+    groupChunks.push([]);
+  }
 
   const seenIds = new Set();
   const all = [];
 
+  const tasks = [];
+  for (const lineChunk of lineChunks) {
+    if (lineChunk.length < 2) continue;
+    for (const groupChunk of groupChunks) {
+      const filters = {};
+      if (groupChunk.length) filters.category_group_ids = groupChunk;
+      if (categoryIds.length) filters.category_ids = categoryIds;
+      if (!Object.keys(filters).length) continue;
+      tasks.push({ lineChunk, groupChunk, filters });
+    }
+  }
+
   await Promise.all(
-    chunks.map(async (chunk) => {
-      if (chunk.length < 2) return;
+    tasks.map(async ({ lineChunk, groupChunk, filters }) => {
       try {
         const res = await fetchWithTimeout(
           ORS_POIS_URL,
@@ -169,7 +210,7 @@ export async function fetchRoutePois(
             body: JSON.stringify({
               request: "pois",
               geometry: {
-                geojson: { type: "LineString", coordinates: chunk },
+                geojson: { type: "LineString", coordinates: lineChunk },
                 buffer: bufferM,
               },
               filters,
@@ -180,16 +221,14 @@ export async function fetchRoutePois(
         );
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
-          console.warn(`[ORS POIs] HTTP ${res.status} — groups=${groupIds} cats=${categoryIds} body=${errText.slice(0, 500)}`);
+          console.warn(
+            `[ORS POIs] HTTP ${res.status} — groups=${groupChunk} cats=${categoryIds} body=${errText.slice(0, 500)}`,
+          );
           return;
         }
         const text = await res.text();
         const data = JSON.parse(text.replace(/\bNaN\b/g, "null"));
         const features = data.features ?? [];
-        const named = features.filter((f) => f.properties?.osm_tags?.name || f.properties?.name);
-        orsLog(
-          `[ORS POIs] chunk ${features.length} raw / ${named.length} named — groups=${groupIds} cats=${categoryIds}`,
-        );
         for (const f of features) {
           const id =
             f.properties?.osm_id ?? JSON.stringify(f.geometry?.coordinates);
@@ -207,13 +246,9 @@ export async function fetchRoutePois(
   return all;
 }
 
-// Drops POIs that are disproportionately far by actual routed distance vs
-// straight-line distance — catches barriers like rivers, walls, motorways.
-// anchorCoords: evenly-sampled skeleton points used as matrix sources.
-// ratioThreshold: max allowed routedDist/haversineDist (default 2.5).
-// Fail-open: any matrix error returns the original pois list unchanged.
-const ORS_MATRIX_BATCH = 50;
-
+// Exported. Used by poi-select.js and ai/pipeline.js.
+// Drops POIs whose routed distance from the route is implausibly longer than
+// straight-line (barrier-blocked / unreachable), batching via _matrixFilterBatch.
 export async function filterUnreachablePois(
   orsProfile,
   anchorCoords,
@@ -236,6 +271,9 @@ export async function filterUnreachablePois(
   return result;
 }
 
+// Used by filterUnreachablePois (one batch of POIs at a time).
+// ORS matrix call from route anchors to POIs; keeps a POI if its routed/
+// straight-line distance ratio stays under the threshold. Fails open (keeps all).
 async function _matrixFilterBatch(orsProfile, anchors, pois, ratioThreshold) {
   const locations = [
     ...anchors.map(([lng, lat]) => [lng, lat]),
@@ -274,14 +312,15 @@ async function _matrixFilterBatch(orsProfile, anchors, pois, ratioThreshold) {
     }
     distMatrix = (await res.json()).distances;
   } catch (err) {
-    console.warn(`[ors] Matrix filter failed: ${err.message} — keeping all POIs`);
+    console.warn(
+      `[ors] Matrix filter failed: ${err.message} — keeping all POIs`,
+    );
     return pois;
   }
 
   if (!Array.isArray(distMatrix)) return pois;
 
   const kept = [];
-  let dropped = 0;
 
   for (let j = 0; j < pois.length; j++) {
     const poi = pois[j];
@@ -291,24 +330,16 @@ async function _matrixFilterBatch(orsProfile, anchors, pois, ratioThreshold) {
       const routedM = distMatrix[s]?.[j];
       if (routedM == null || routedM <= 0) continue;
       const hvM = haversineM(anchors[s], [poi.lng, poi.lat]);
-      if (hvM < 50) { minRatio = 1; break; } // essentially on the route
+      if (hvM < 50) {
+        minRatio = 1;
+        break;
+      }
       minRatio = Math.min(minRatio, routedM / hvM);
     }
 
     if (minRatio <= ratioThreshold) {
       kept.push(poi);
-    } else {
-      dropped++;
-      orsLog(
-        `[ors] Matrix: dropped "${poi.name}" (ratio ${minRatio === Infinity ? "∞" : minRatio.toFixed(1)}x)`,
-      );
     }
-  }
-
-  if (dropped > 0) {
-    orsLog(
-      `[ors] Matrix filter: kept ${kept.length}/${pois.length} (dropped ${dropped} barrier-blocked)`,
-    );
   }
 
   return kept;

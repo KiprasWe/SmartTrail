@@ -1,5 +1,7 @@
 import { haversineM } from "./geo.js";
 
+// Used by optimizeWaypointSequence.
+// Dedupes a coord list by ~6-decimal key, skipping malformed entries.
 function uniqCoords(coords) {
   const seen = new Set();
   const out = [];
@@ -13,6 +15,8 @@ function uniqCoords(coords) {
   return out;
 }
 
+// Used by twoOptOpenPath.
+// Total metres of an open path start -> path... -> end (haversine).
 function pathCost(path, start, end) {
   let cost = 0;
   let prev = start;
@@ -24,6 +28,9 @@ function pathCost(path, start, end) {
   return cost;
 }
 
+// Used by optimizeWaypointSequence.
+// Greedy nearest-neighbor ordering from `start` — the initial tour 2-opt
+// then refines.
 function nearestNeighborInit(wps, start) {
   const remaining = [...wps];
   const out = [];
@@ -45,6 +52,9 @@ function nearestNeighborInit(wps, start) {
   return out;
 }
 
+// Used by optimizeWaypointSequence.
+// 2-opt local search (segment reversals) minimizing pathCost for a fixed
+// start/end, capped at maxIters passes.
 function twoOptOpenPath(path, start, end, maxIters = 80) {
   if (path.length < 4) return path;
   let best = [...path];
@@ -73,13 +83,9 @@ function twoOptOpenPath(path, start, end, maxIters = 80) {
   return best;
 }
 
-/**
- * Reorders intermediate waypoint coords into a lower-detour visiting sequence.
- * This is a heuristic (nearest-neighbor + 2-opt) on haversine distance.
- *
- * - For A→B: optimizes start → ...wps... → end
- * - For loops: optimizes start → ...wps... → start
- */
+// Exported — module entry point. Used by routeEditController.
+// Orders user waypoints to shorten the route: dedupe -> nearest-neighbor
+// init -> 2-opt (end is `start` for loops).
 export function optimizeWaypointSequence({ waypoints, start, end, isLoop }) {
   const uniq = uniqCoords(Array.isArray(waypoints) ? waypoints : []);
   if (uniq.length <= 2) return uniq;
@@ -88,4 +94,3 @@ export function optimizeWaypointSequence({ waypoints, start, end, isLoop }) {
   const init = nearestNeighborInit(uniq, start);
   return twoOptOpenPath(init, start, effectiveEnd);
 }
-

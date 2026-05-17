@@ -47,20 +47,20 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
       if (raw) {
         const cached: UserProfile = JSON.parse(raw);
         const { user } = useAuthStore.getState();
-        // Only use the cache if it belongs to the currently logged-in user
+
         if (user && cached.id === user.id) {
           set({ profile: cached, loading: false });
         }
       }
     } catch {}
-    // fetch fresh in background (don't await)
+
     get().fetchProfile();
   },
 
   fetchProfile: async () => {
     const { authFetch } = useAuthStore.getState();
     const hadProfile = get().profile !== null;
-    // Avoid flashing the full-screen loader when we already show cached profile.
+
     if (!hadProfile) set({ loading: true, error: null });
     try {
       const { data } = await authFetch("/user/me");
@@ -109,10 +109,8 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
   },
 }));
 
-useAuthStore.subscribe(
-  (state, prevState) => {
-    if (prevState.user !== null && state.user === null) {
-      useProfileStore.getState().clear();
-    }
-  },
-);
+useAuthStore.subscribe((state, prevState) => {
+  if (prevState.user !== null && state.user === null) {
+    useProfileStore.getState().clear();
+  }
+});

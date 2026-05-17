@@ -15,7 +15,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
   state: State = { hasError: false, message: "" };
 
   static getDerivedStateFromError(error: unknown): State {
-    // In production, hide raw error.message to avoid leaking internals.
+    
     const message =
       __DEV__ && error instanceof Error
         ? error.message

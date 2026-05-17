@@ -83,8 +83,6 @@ export function useRouteGeneration() {
   const [generating, setGenerating] = useState(false);
   const [progressLabel, setProgressLabel] = useState<string | null>(null);
 
-  // Holds a cleanup function for any active EventSource so we can close it
-  // if the user navigates away before the stream completes.
   const esCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const ref = esCleanupRef;
@@ -193,7 +191,9 @@ export function useRouteGeneration() {
               waypoints: waypointCoords,
             };
 
-        const endpoint = isLoop ? "/routes/generate-loop" : "/routes/generate";
+        const endpoint = isLoop
+          ? "/routes/generate-loop"
+          : "/routes/generate-direct";
         const { authFetch } = useAuthStore.getState();
         const { data: routeResp } = await authFetch(endpoint, {
           method: "POST",
@@ -228,8 +228,11 @@ function runAiStream(
   setProgressLabel: (v: string | null) => void,
 ) {
   return new Promise<void>((resolve, reject) => {
+    const aiEndpoint = genParams.end
+      ? "/routes/generate-ai-direct"
+      : "/routes/generate-ai-loop";
     const es = new EventSource<AiStreamEvents>(
-      `${process.env.EXPO_PUBLIC_API_URL}/routes/generate-ai/stream`,
+      `${process.env.EXPO_PUBLIC_API_URL}${aiEndpoint}`,
       {
         method: "POST",
         headers: {
@@ -237,9 +240,7 @@ function runAiStream(
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(genParams),
-        // Disable auto-reconnect — Gemini calls are expensive, we don't
-        // want the client silently re-firing the whole pipeline on a
-        // transient network blip.
+
         pollingInterval: 0,
       },
     );
@@ -257,7 +258,7 @@ function runAiStream(
         const label = getAiStageLabel(payload.stage as AiStage);
         if (label) setProgressLabel(label);
       } catch {
-        /* ignore malformed stage event */
+        
       }
     });
 
@@ -281,8 +282,7 @@ function runAiStream(
 
     es.addEventListener("error", (event: any) => {
       cleanup();
-      // `error` covers both server-emitted typed errors (event.data is JSON with
-      // a known error code) and connection-level failures (event.data is undefined).
+
       let code = "UNKNOWN_ERROR";
       if (event?.data) {
         try {
@@ -294,7 +294,7 @@ function runAiStream(
       } else {
         code = "NETWORK_ERROR";
       }
-      // Reject with a synthetic Axios-like error so resolveErr can translate it.
+      
       reject({ response: { data: { code } } });
     });
   });

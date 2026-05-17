@@ -1,8 +1,6 @@
 import { useState, useCallback, useRef } from "react";
 import { resolveErr } from "@/lib/error-messages";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export interface PhotonFeature {
   id: string;
   label: string;
@@ -14,8 +12,6 @@ export interface ResolvedLocation {
   label: string;
   coords: { lat: number; lng: number };
 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function buildLabel(p: Record<string, any>): {
   label: string;
@@ -65,18 +61,12 @@ function parseFeatures(features: unknown[]): PhotonFeature[] {
   });
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
-
 export function useLocationSearch() {
   const [results, setResults] = useState<PhotonFeature[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /**
-   * Search Photon for a text query, optionally biased toward userCoords.
-   * Debounced by 300 ms.
-   */
   const search = useCallback(
     (
       query: string,
@@ -113,9 +103,6 @@ export function useLocationSearch() {
     [],
   );
 
-  /**
-   * Reverse geocode coords → human-readable label via Photon.
-   */
   const reverseGeocode = useCallback(
     async (lat: number, lng: number): Promise<ResolvedLocation | null> => {
       try {

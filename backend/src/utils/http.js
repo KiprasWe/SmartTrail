@@ -1,4 +1,4 @@
-const TIMEOUT_ROUTING_MS = 30_000;
+import { TIMEOUT_ROUTING_MS } from "../config/tuning.js";
 
 export async function fetchWithTimeout(
   url,

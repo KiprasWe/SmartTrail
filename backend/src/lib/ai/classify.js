@@ -1,7 +1,3 @@
-// lib/ai/classify.js — request classification + intent decomposition.
-//
-// classifyAndDecompose() — single Gemini call: classify mode + generate intents
-
 import { Type } from "@google/genai";
 import {
   genai,
@@ -11,7 +7,7 @@ import {
   ROUTE_SYSTEM_INSTRUCTION,
   sanitizePromptInput,
 } from "./shared.js";
-import { createAiTrace } from "./trace.js";
+import { ALLOWED_ORS_SUBCATEGORIES } from "../places.js";
 
 const ALLOWED_ORS_GROUPS = [
   "animals",
@@ -25,6 +21,8 @@ const ALLOWED_ORS_GROUPS = [
   "tourism",
 ];
 
+// Embedded in CLASSIFY_DECOMPOSE_SCHEMA.
+// Gemini response schema for a single POI search intent.
 const INTENT_SCHEMA = {
   type: Type.ARRAY,
   items: {
@@ -44,12 +42,34 @@ const INTENT_SCHEMA = {
         description:
           "Loop-only: preferred initial direction. 0 = no preference. 1=N, 2=NE, 3=E, 4=SE, 5=S, 6=SW, 7=W, 8=NW.",
       },
+      subcategories: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+        description:
+          `Optional narrower POI subcategories. Allowed tokens: ${ALLOWED_ORS_SUBCATEGORIES.join(", ")}. ` +
+          `Use ONLY when the user named a specific subtype (e.g. piliakalniai → ["archaeological_site"], parkai → ["park","nature_reserve","garden"]). ` +
+          `Leave empty [] when the intent is broad (e.g. plain "history" or "nature").`,
+      },
     },
-    required: ["theme", "places_type", "count", "travel_heading"],
-    propertyOrdering: ["theme", "places_type", "count", "travel_heading"],
+    required: [
+      "theme",
+      "places_type",
+      "count",
+      "travel_heading",
+      "subcategories",
+    ],
+    propertyOrdering: [
+      "theme",
+      "places_type",
+      "count",
+      "travel_heading",
+      "subcategories",
+    ],
   },
 };
 
+// Used by classifyAndDecompose as the Gemini responseJsonSchema.
+// Full structured-output shape: mode + named_places + has_categories + intents.
 const CLASSIFY_DECOMPOSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -62,9 +82,23 @@ const CLASSIFY_DECOMPOSE_SCHEMA = {
   propertyOrdering: ["mode", "named_places", "has_categories", "intents"],
 };
 
-function buildPrompt({ profileLabel, preferences, area, hasEnd, placeStart, placeEnd, distanceKm, lang = "en" }) {
+// Used by classifyAndDecompose.
+// Assembles the big classify+intents Gemini prompt from trip context,
+// type/subcategory mapping tables, and language instructions.
+function buildPrompt({
+  profileLabel,
+  preferences,
+  area,
+  hasEnd,
+  placeStart,
+  placeEnd,
+  distanceKm,
+  lang = "en",
+}) {
   const rawPrefs = sanitizePromptInput(preferences, 400);
-  const fallback = PROFILE_FALLBACK_THEME[profileLabel] ?? "scenic viewpoints and local landmarks";
+  const fallback =
+    PROFILE_FALLBACK_THEME[profileLabel] ??
+    "scenic viewpoints and local landmarks";
   const langInstr = LANG_INSTRUCTIONS[lang] ?? LANG_INSTRUCTIONS.en;
   const tripLine = hasEnd
     ? `${profileLabel} from "${placeStart ?? "start"}" to "${placeEnd ?? "destination"}" (~${Math.round(distanceKm)} km).`
@@ -122,6 +156,34 @@ function buildPrompt({ profileLabel, preferences, area, hasEnd, placeStart, plac
     `  Local-language synonyms map to the same group.`,
     `  NEVER use leisure_and_entertainment for casinos, gambling, strip clubs, or adult entertainment.`,
     ``,
+    `SUBCATEGORIES — narrow the search when the user named a SPECIFIC subtype.`,
+    `Allowed tokens (use ONLY these): ${ALLOWED_ORS_SUBCATEGORIES.join(", ")}`,
+    `Mapping (LT/EN synonyms → token):`,
+    `  piliakalnis / hillfort / senovės gyvenvietė / archaeological site → archaeological_site`,
+    `  pilis / castle → castle`,
+    `  griuvėsiai / ruins → ruins`,
+    `  tvirtovė / bunker / fort → fort`,
+    `  dvaras / manor / palace estate → manor`,
+    `  paminklas / statue / obelisk / monument → monument`,
+    `  memorialas / memorial / atminimo akmuo → memorial`,
+    `  miesto siena / city walls → citywalls`,
+    `  mūšio laukas / battlefield → battlefield`,
+    `  parkas / park → park`,
+    `  gamtos rezervatas / nature reserve → nature_reserve`,
+    `  botanikos sodas / garden → garden`,
+    `  paplūdimys / beach → beach`,
+    `  kalva / kalnas / hill / peak → peak`,
+    `  šaltinis / spring → spring`,
+    `  ežeras / upė / lake / river / water body → water`,
+    `  urvas / cave → cave_entrance`,
+    `  apžvalgos aikštelė / viewpoint / panorama → viewpoint`,
+    `  generic "lankytinas objektas" / attraction → attraction`,
+    ``,
+    `RULES for subcategories:`,
+    `- When user names a SPECIFIC subtype ("piliakalniai", "parkai"), set subcategories to ONLY the matching tokens. Do NOT widen to the parent group.`,
+    `- When user is broad ("history", "nature", "gamta") with no specific subtype, leave subcategories=[] so the broad group search applies.`,
+    `- Note: park/nature_reserve/garden live under "leisure_and_entertainment", NOT "natural". If subcategories=["park"] you may still set places_type to whichever group matches the theme — subcategories override the group at search time.`,
+    ``,
     `CREATIVE THINKING — for vague or broad requests, think about what actually exists near the route:`,
     `  "WWII / war / military" → forts, war memorials, bunkers, military museums typical to this region`,
     `  "manors / estates / castles" → historic manor houses, palaces, castle ruins of the local area`,
@@ -148,41 +210,36 @@ function buildPrompt({ profileLabel, preferences, area, hasEnd, placeStart, plac
     .join("\n");
 }
 
-function normalizeIntents(parsed, trace) {
+// Used by classifyAndDecompose.
+// Sanitizes/coerces raw Gemini intents: clamps fields, drops unknown
+// groups/subcategories, caps at 6 intents.
+function normalizeIntents(parsed) {
   if (!Array.isArray(parsed)) return [];
   const allowed = new Set(ALLOWED_ORS_GROUPS);
+  const allowedSubs = new Set(ALLOWED_ORS_SUBCATEGORIES);
   const normalized = parsed
     .filter((p) => p && typeof p === "object")
     .map((p) => {
-      const theme = String(p.theme ?? "").trim().slice(0, 150);
+      const theme = String(p.theme ?? "")
+        .trim()
+        .slice(0, 150);
       if (!theme) return null;
       const rawType = String(p.places_type ?? "").trim();
       const coercedType = allowed.has(rawType) ? rawType : "tourism";
-      if (trace?.enabled) {
-        trace.decision("intent_normalize", {
-          raw: {
-            theme: String(p.theme ?? "").trim().slice(0, 150) || null,
-            places_type: rawType || null,
-            count: p.count ?? null,
-            travel_heading: p.travel_heading ?? null,
-          },
-          normalized: {
-            theme,
-            places_type: coercedType,
-            count: Math.max(1, Math.min(Number(p.count) || 3, 8)),
-            travel_heading: Math.max(0, Math.min(Number(p.travel_heading) || 0, 8)),
-          },
-          fixes: {
-            places_type_fallback: allowed.has(rawType) ? null : "tourism",
-            theme_empty_dropped: null,
-          },
-        });
-      }
+      const rawSubs = Array.isArray(p.subcategories) ? p.subcategories : [];
+      const coercedSubs = [
+        ...new Set(
+          rawSubs
+            .map((s) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+            .filter((s) => allowedSubs.has(s)),
+        ),
+      ].slice(0, 8);
       return {
         theme,
         places_type: coercedType,
         count: Math.max(1, Math.min(Number(p.count) || 3, 8)),
         travel_heading: Math.max(0, Math.min(Number(p.travel_heading) || 0, 8)),
+        subcategories: coercedSubs,
       };
     })
     .filter(Boolean)
@@ -190,6 +247,10 @@ function normalizeIntents(parsed, trace) {
   return normalized;
 }
 
+// Exported — module entry point. Used by ai/pipeline.js.
+// Single Gemini call that classifies the request (named/category/mixed) and
+// decomposes it into normalized POI intents; returns a safe fallback on
+// missing AI / empty prefs / parse failure.
 export async function classifyAndDecompose({
   preferences,
   profileLabel,
@@ -199,13 +260,25 @@ export async function classifyAndDecompose({
   placeEnd,
   distanceKm,
   lang = "en",
-  trace,
 }) {
-  const fallback = { mode: "category", namedPlaces: [], hasCategories: true, intents: [] };
+  const fallback = {
+    mode: "category",
+    namedPlaces: [],
+    hasCategories: true,
+    intents: [],
+  };
   if (!genai || !preferences?.trim()) return fallback;
 
-  const t = trace ?? createAiTrace({ enabled: false });
-  const prompt = buildPrompt({ profileLabel, preferences, area, hasEnd, placeStart, placeEnd, distanceKm, lang });
+  const prompt = buildPrompt({
+    profileLabel,
+    preferences,
+    area,
+    hasEnd,
+    placeStart,
+    placeEnd,
+    distanceKm,
+    lang,
+  });
 
   try {
     const r = await genai.models.generateContent({
@@ -227,7 +300,11 @@ export async function classifyAndDecompose({
       const s = t.indexOf("{");
       const e = t.lastIndexOf("}");
       if (s !== -1 && e > s) {
-        try { parsed = JSON.parse(t.slice(s, e + 1)); } catch { parsed = null; }
+        try {
+          parsed = JSON.parse(t.slice(s, e + 1));
+        } catch {
+          parsed = null;
+        }
       }
     }
 
@@ -236,21 +313,15 @@ export async function classifyAndDecompose({
       return fallback;
     }
 
-    const namedPlaces = (Array.isArray(parsed.named_places) ? parsed.named_places : [])
+    const namedPlaces = (
+      Array.isArray(parsed.named_places) ? parsed.named_places : []
+    )
       .filter((x) => typeof x === "string" && x.trim().length > 1)
       .map((x) => x.trim())
       .slice(0, 8);
 
     const rawIntents = Array.isArray(parsed.intents) ? parsed.intents : [];
-    const intents = normalizeIntents(rawIntents, t);
-
-    t.summary("classify_result", {
-      mode: parsed.mode,
-      named_places_count: namedPlaces.length,
-      intents_raw_count: Array.isArray(rawIntents) ? rawIntents.length : 0,
-      intents_normalized_count: intents.length,
-      has_categories: Boolean(parsed.has_categories),
-    });
+    const intents = normalizeIntents(rawIntents);
 
     console.log(
       `[classify] mode=${parsed.mode.toUpperCase()} | named: [${namedPlaces.join(", ")}] | intents: ${intents.length}`,

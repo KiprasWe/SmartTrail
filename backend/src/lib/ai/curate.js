@@ -1,8 +1,3 @@
-// lib/ai/curate.js — Gemini tour-guide curation.
-//
-// Takes the assembled POI pool and asks Gemini to pick essential vs optional
-// stops and write a 1-2 sentence guide note for each.
-
 import { Type } from "@google/genai";
 import {
   genai,
@@ -12,9 +7,10 @@ import {
   sanitizePromptInput,
   extractJsonArray,
 } from "./shared.js";
-import { createAiTrace } from "./trace.js";
 
-/** Model sometimes returns ors:23 instead of the full ors:… id (row-number confusion). */
+// Used by tourGuideCurate.
+// Recovers the real place_id when the model returns a shortened/typo'd
+// "ors:N" id by treating N as a 1-based index into pois (rejects unsafe N).
 function resolveCuratePlaceId(rawId, pois, byId) {
   if (!rawId || typeof rawId !== "string") return null;
   const id = rawId.trim();
@@ -24,12 +20,15 @@ function resolveCuratePlaceId(rawId, pois, byId) {
   const digits = m[1];
   const n = parseInt(digits, 10);
   if (!Number.isFinite(n) || n < 1 || n > pois.length) return null;
-  // Short numeric tail only — real OSM ids in this app are typically long.
+
   if (digits.length > 6) return null;
   const candidate = pois[n - 1]?.place_id;
   return candidate && String(candidate) !== id ? candidate : null;
 }
 
+// Used by buildCurationPrompt.
+// Returns the mode-specific prompt label + instruction block for
+// category / named / mixed curation modes.
 function buildModeCurationContext(mode, namedPois, preferences) {
   switch (mode) {
     case "category":
@@ -53,7 +52,7 @@ function buildModeCurationContext(mode, namedPois, preferences) {
           `STRICT ANCHOR MODE — user named specific places they MUST visit:`,
           anchorList,
           ``,
-          `1. Every ⚑ USER-REQUESTED place MUST be essential=true. No exceptions.`,
+          `1. Every USER-REQUESTED place MUST be essential=true. No exceptions.`,
           `2. Do NOT add stops from categories the user didn't mention.`,
           `3. Only add stops directly on/near the route between anchors AND relevant.`,
           `4. Write vivid guide notes for each anchor explaining why it is special.`,
@@ -88,6 +87,8 @@ function buildModeCurationContext(mode, namedPois, preferences) {
   }
 }
 
+// Used by tourGuideCurate as the Gemini responseJsonSchema.
+// Output shape per curated stop: place_id + guide_note + essential.
 const CURATION_SCHEMA = {
   type: Type.ARRAY,
   items: {
@@ -106,7 +107,8 @@ const CURATION_SCHEMA = {
       },
       essential: {
         type: Type.BOOLEAN,
-        description: "true = must-visit stop affecting the route; false = nice-to-have.",
+        description:
+          "true = must-visit stop affecting the route; false = nice-to-have.",
       },
     },
     required: ["place_id", "guide_note", "essential"],
@@ -114,16 +116,27 @@ const CURATION_SCHEMA = {
   },
 };
 
+// Used by tourGuideCurate.
+// Builds the curation prompt: trip desc + mode block + POI list (tagging
+// user-requested anchors) + distance-scaled essential-stop budget.
 function buildCurationPrompt({
-  pois, profileLabel, preferences, placeStart, placeEnd,
-  hasEnd, distanceKm, lang, mode, namedPois, userNamedPlaceIds,
+  pois,
+  profileLabel,
+  preferences,
+  placeStart,
+  placeEnd,
+  hasEnd,
+  distanceKm,
+  lang,
+  mode,
+  namedPois,
+  userNamedPlaceIds,
 }) {
   const langInstr = LANG_INSTRUCTIONS[lang] ?? LANG_INSTRUCTIONS.en;
   const tripDesc = hasEnd
     ? `${profileLabel} from "${placeStart || "start"}" to "${placeEnd || "destination"}" (~${Math.round(distanceKm)} km)`
     : `${profileLabel} round trip from "${placeStart || "start"}" (~${Math.round(distanceKm)} km)`;
 
-  // Do NOT prefix with [1], [2], … — models often confuse that index with place_id (e.g. ors:23).
   const poiList = pois
     .map((p) => {
       const isNamed = userNamedPlaceIds?.has(p.place_id);
@@ -182,17 +195,37 @@ function buildCurationPrompt({
     .join("\n");
 }
 
+// Exported — module entry point. Used by ai/pipeline.js.
+// One Gemini call that picks/annotates the best stops from candidate POIs;
+// resolves typo'd ids, drops bad curations, re-injects user-named anchors.
+// Returns null (caller falls back) on missing AI / parse failure / low match.
 export async function tourGuideCurate({
-  pois, profileLabel, preferences, placeStart, placeEnd,
-  hasEnd, distanceKm, lang, mode, namedPois, userNamedPlaceIds,
-  trace,
+  pois,
+  profileLabel,
+  preferences,
+  placeStart,
+  placeEnd,
+  hasEnd,
+  distanceKm,
+  lang,
+  mode,
+  namedPois,
+  userNamedPlaceIds,
 }) {
   if (!genai || !pois.length) return null;
 
-  const t = trace ?? createAiTrace({ enabled: false });
   const prompt = buildCurationPrompt({
-    pois, profileLabel, preferences, placeStart, placeEnd,
-    hasEnd, distanceKm, lang, mode, namedPois, userNamedPlaceIds,
+    pois,
+    profileLabel,
+    preferences,
+    placeStart,
+    placeEnd,
+    hasEnd,
+    distanceKm,
+    lang,
+    mode,
+    namedPois,
+    userNamedPlaceIds,
   });
 
   try {
@@ -217,22 +250,24 @@ export async function tourGuideCurate({
 
     if (!Array.isArray(parsed) || !parsed.length) {
       console.warn("[curate] Curation returned empty");
-      t.summary("curation_empty", { input_count: pois.length, mode, distanceKm });
       return null;
     }
 
     const byId = new Map(pois.map((p) => [p.place_id, p]));
-    const rawIds = parsed.map((x) => x?.place_id).filter(Boolean);
-    const unknownIds = rawIds.filter((id) => !byId.has(id)).slice(0, 50);
 
     const curated = [];
     const seen = new Set();
     for (const item of parsed) {
-      const raw = typeof item?.place_id === "string" ? item.place_id.trim() : "";
-      const resolvedId = raw && byId.has(raw) ? raw : resolveCuratePlaceId(raw, pois, byId);
-      if (!resolvedId || !byId.has(resolvedId) || seen.has(resolvedId)) continue;
+      const raw =
+        typeof item?.place_id === "string" ? item.place_id.trim() : "";
+      const resolvedId =
+        raw && byId.has(raw) ? raw : resolveCuratePlaceId(raw, pois, byId);
+      if (!resolvedId || !byId.has(resolvedId) || seen.has(resolvedId))
+        continue;
       seen.add(resolvedId);
-      const essential = userNamedPlaceIds?.has(resolvedId) ? true : Boolean(item.essential);
+      const essential = userNamedPlaceIds?.has(resolvedId)
+        ? true
+        : Boolean(item.essential);
       const note = String(item.guide_note ?? "").trim();
       curated.push({
         ...byId.get(resolvedId),
@@ -247,61 +282,35 @@ export async function tourGuideCurate({
       console.warn(
         `[curate] Discarding curation: only ${curated.length}/${rawLen} place_ids matched (likely model typos). Using fallback.`,
       );
-      t.summary("curation_discarded_low_match", {
-        mode,
-        input_count: pois.length,
-        model_output_count: rawLen,
-        kept_count: curated.length,
-        min_expected: minKept,
-        unknown_place_ids_sample: unknownIds.slice(0, 20),
-      });
       return null;
     }
     if (rawLen >= 5 && curated.length === 0) {
-      t.summary("curation_discarded_zero_match", {
-        mode,
-        input_count: pois.length,
-        model_output_count: rawLen,
-        unknown_place_ids_sample: unknownIds.slice(0, 20),
-      });
       return null;
     }
 
-    // Safety net: re-inject any user-named POI Gemini silently dropped
     if (userNamedPlaceIds?.size) {
       for (const placeId of userNamedPlaceIds) {
         if (!curated.some((p) => p.place_id === placeId) && byId.has(placeId)) {
           const poi = byId.get(placeId);
-          curated.push({ ...poi, guide_note: poi.guide_note ?? poi.editorial_summary ?? "", essential: true });
+          curated.push({
+            ...poi,
+            guide_note: poi.guide_note ?? poi.editorial_summary ?? "",
+            essential: true,
+          });
           console.log(`[curate] Safety net: re-injected "${poi.name}"`);
-          t.poiDecision("curation_reinject", poi, { reason: "user_named_dropped_by_model" });
         }
       }
     }
 
     const essential = curated.filter((p) => p.essential).length;
-    const droppedInputIds = pois
-      .map((p) => p.place_id)
-      .filter((id) => id && !curated.some((c) => c.place_id === id))
-      .slice(0, 80);
-
-    t.summary("curation_result", {
-      mode,
-      distanceKm,
-      input_count: pois.length,
-      model_output_count: Array.isArray(parsed) ? parsed.length : 0,
-      kept_count: curated.length,
-      essential_count: essential,
-      optional_count: curated.length - essential,
-      unknown_place_ids_from_model: unknownIds.length ? unknownIds : null,
-      dropped_input_place_ids_sample: droppedInputIds.length ? droppedInputIds : null,
-    });
     console.log(
       `[curate] ${curated.length} stops (${essential} essential, ${curated.length - essential} optional) [mode=${mode}]:\n` +
         curated
           .map((p) => {
             const note = p.guide_note?.trim();
-            const tail = note ? `"${note.slice(0, 80)}${note.length > 80 ? "…" : ""}"` : "—";
+            const tail = note
+              ? `"${note.slice(0, 80)}${note.length > 80 ? "…" : ""}"`
+              : "—";
             return `  ${p.essential ? "★" : "○"} ${p.name} — ${tail}`;
           })
           .join("\n"),
@@ -310,12 +319,6 @@ export async function tourGuideCurate({
     return curated.length ? curated : null;
   } catch (err) {
     console.warn("[curate] Curation failed:", err.message);
-    (trace ?? createAiTrace({ enabled: false })).summary("curation_error", {
-      mode,
-      distanceKm,
-      input_count: pois.length,
-      error: err.message,
-    });
     return null;
   }
 }

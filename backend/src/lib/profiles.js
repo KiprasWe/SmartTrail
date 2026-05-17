@@ -1,6 +1,3 @@
-// For profiles with runSpeedKmh, derive duration from distance at a fixed speed
-// rather than scaling ORS walking time (which varies by surface and is unreliable
-// as a running proxy). Falls back to speedFactor for other profiles.
 export function calcDuration(distance_km, ors_duration_s, profileConfig) {
   if (profileConfig.runSpeedKmh) {
     return Math.round((distance_km / profileConfig.runSpeedKmh) * 3600);

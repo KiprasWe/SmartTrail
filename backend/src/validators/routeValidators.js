@@ -15,12 +15,14 @@ function isInjectionAttempt(text) {
   return INJECTION_PATTERNS.some((p) => p.test(text));
 }
 
-// [lng, lat] array (GeoJSON order)
 const lngLat = z
   .tuple([z.number(), z.number()])
-  .refine(([lng, lat]) => lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90, {
-    message: "Invalid coordinates: lng must be -180..180, lat -90..90",
-  });
+  .refine(
+    ([lng, lat]) => lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90,
+    {
+      message: "Invalid coordinates: lng must be -180..180, lat -90..90",
+    },
+  );
 
 const profile = z.enum([
   "foot-walking",
@@ -78,48 +80,42 @@ export const splicePoiSchema = z.object({
   }),
 });
 
-export const aiRouteSchema = z
-  .object({
-    start: lngLat,
-    end: lngLat.optional(),
-    distance: z.number().min(500).max(6_000_000).optional(),
-    profile: profile.default("foot-walking"),
-    elevationPreference,
-    area: z.string().max(200).optional(),
-    preferences: z
-    .string()
-    .max(500)
-    .optional()
-    .refine((v) => !v || !isInjectionAttempt(v), {
-      message: "Invalid preferences input",
-    }),
-    lang: z.enum(["en", "lt"]).default("en"),
-    waypoints: z.array(lngLat).optional().default([]),
-  })
-  .refine((d) => d.end || typeof d.distance === "number", {
-    message: "Either end or distance is required",
-    path: ["distance"],
+const aiPreferences = z
+  .string()
+  .max(500)
+  .optional()
+  .refine((v) => !v || !isInjectionAttempt(v), {
+    message: "Invalid preferences input",
   });
 
-/** A→B reroute with optional via-waypoints (simple + AI). */
+export const aiDirectSchema = z.object({
+  start: lngLat,
+  end: lngLat,
+  profile: profile.default("foot-walking"),
+  elevationPreference,
+  area: z.string().max(200).optional(),
+  preferences: aiPreferences,
+  lang: z.enum(["en", "lt"]).default("en"),
+  waypoints: z.array(lngLat).optional().default([]),
+});
+
+export const aiLoopSchema = z.object({
+  start: lngLat,
+  distance: z.number().min(500).max(6_000_000),
+  profile: profile.default("foot-walking"),
+  elevationPreference,
+  area: z.string().max(200).optional(),
+  preferences: aiPreferences,
+  lang: z.enum(["en", "lt"]).default("en"),
+  waypoints: z.array(lngLat).optional().default([]),
+});
+
 export const rerouteDirectSchema = z.object({
   start: lngLat,
   end: lngLat,
   profile: profile.default("foot-walking"),
   elevationPreference,
   waypoints: z.array(lngLat).max(10).optional().default([]),
-});
-
-/** Loop reroute / full loop rebuild with stops (simple + AI). */
-export const rerouteLoopSchema = z.object({
-  start: lngLat,
-  distance: z.number().min(500).max(6_000_000),
-  profile: profile.default("foot-walking"),
-  elevationPreference,
-  waypoints: z.array(lngLat).max(10).optional().default([]),
-  controlPoints: z.array(lngLat).max(20).optional().default([]),
-  travelHeading: z.number().optional().default(0),
-  rotation: z.enum(["clockwise", "counterclockwise"]).optional().default("clockwise"),
 });
 
 export const saveRouteSchema = z.object({

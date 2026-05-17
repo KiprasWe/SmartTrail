@@ -15,7 +15,6 @@ GoogleSignin.configure({
   iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
 });
 
-// Module-level mutable refs — must survive renders, not Zustand state.
 let _isRefreshing = false;
 let _refreshSubscribers: ((token: string) => void)[] = [];
 let _refreshRejectSubscribers: ((err: unknown) => void)[] = [];
@@ -72,8 +71,6 @@ export const useAuthStore = create<AuthStore>((set, get) => {
     set({ token: accessToken });
   };
 
-  // Race the refresh call against a hard timeout so queued requests
-  // don't hang forever if the refresh endpoint is unreachable.
   const refreshTokens = async (storedRefresh: string): Promise<string> => {
     const result = (await Promise.race([
       api.post("/auth/refresh", { refreshToken: storedRefresh }),
@@ -255,7 +252,7 @@ export const useAuthStore = create<AuthStore>((set, get) => {
       try {
         const b64 = stored.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
         const { exp } = JSON.parse(atob(b64));
-        // Proactively refresh if the token expires within 60 seconds.
+
         if (exp * 1000 > Date.now() + 60_000) return stored;
       } catch {
         return stored;

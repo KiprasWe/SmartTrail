@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { prisma } from "../config/db.js";
 import { sendError, Errors } from "../utils/responses.js";
+import { JWT_SECRET } from "../config/env.js";
 
 export const authMiddleware = async (req, res, next) => {
   let token;
@@ -19,7 +20,7 @@ export const authMiddleware = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
     const user = await prisma.user.findUnique({ where: { id: decoded.id } });
 
     if (!user) {

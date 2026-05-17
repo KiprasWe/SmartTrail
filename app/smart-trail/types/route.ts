@@ -1,11 +1,4 @@
-export type Coords = [number, number]; // [lng, lat]
-
-export interface RouteInstruction {
-  instruction: string;
-  type: number;
-  distance_km: number;
-  duration_s: number;
-}
+export type Coords = [number, number]; 
 
 export type ElevationProfile = number[];
 
@@ -42,10 +35,10 @@ export interface SavedRouteListItem {
   title: string;
   description: string | null;
   transport: string;
-  distance: number; // metres
-  duration: number; // seconds
-  ascent: number | null; // metres
-  descent: number | null; // metres
+  distance: number; 
+  duration: number; 
+  ascent: number | null; 
+  descent: number | null; 
   bbox: [number, number, number, number];
   variantLabel: string | null;
   isFavorite: boolean;
@@ -56,7 +49,6 @@ export interface SavedRouteListItem {
 
 export interface SavedRoute extends SavedRouteListItem {
   geometry: { type: "LineString"; coordinates: Coords[] };
-  instructions: RouteInstruction[] | null;
   elevationProfile: ElevationProfile | null;
   aiPlan: AiPlan | null;
   pois: PoiFeature[] | null;
@@ -73,7 +65,6 @@ export interface SaveRouteInput {
   descent?: number;
   geometry: { type: "LineString"; coordinates: Coords[] };
   bbox: [number, number, number, number];
-  instructions?: RouteInstruction[];
   elevationProfile?: ElevationProfile;
   aiPlan?: AiPlan;
   pois?: PoiFeature[];
@@ -106,7 +97,6 @@ export interface RouteVariant {
   pois: PoiFeature[];
   overlap_ratio?: number;
   elevation_profile?: ElevationProfile;
-  maneuvers?: RouteInstruction[];
 }
 
 export interface LoopMeta {

@@ -22,8 +22,6 @@ export type ElevationKey = "flat" | "moderate" | "hilly";
 
 export type DistanceKey = "5" | "10" | "15" | "20" | "custom";
 
-// ─── Option constants ─────────────────────────────────────────────────────────
-
 export const TRANSPORT_OPTIONS: {
   key: TransportKey;
   tKey: string;
@@ -69,8 +67,6 @@ export const DISTANCE_OPTIONS: {
   { key: "20", label: "20 km" },
   { key: "custom", label: "Custom", tKey: "generate.custom-distance" },
 ];
-
-// ─── Components ───────────────────────────────────────────────────────────────
 
 export function SectionLabel({
   label,
@@ -309,7 +305,7 @@ export function PoiPicker({
   );
 }
 
-const POI_COUNT_OPTIONS = [3, 5, 7, 10, 0] as const; // 0 = All
+const POI_COUNT_OPTIONS = [3, 5, 7, 10, 0] as const; 
 
 export function PoiCountPicker({
   value,
@@ -458,8 +454,6 @@ export function OfflineScreen() {
     </View>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   root: { flex: 1 },

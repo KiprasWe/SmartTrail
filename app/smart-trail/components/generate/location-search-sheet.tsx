@@ -94,9 +94,7 @@ export function LocationSearchSheet({
         useNativeDriver: true,
       }).start();
     }
-    // slideAnim is a stable ref-backed Animated.Value; clearResults is a stable
-    // hook callback. Only `visible` should re-trigger this effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [visible]);
 
   const handleChangeText = useCallback(
@@ -134,7 +132,7 @@ export function LocationSearchSheet({
           ]
             .filter(Boolean)
             .join(", ");
-          // Only accept the native fallback if it actually produced text.
+          
           if (label) resolved = { label, coords: { lat, lng } };
         }
       }

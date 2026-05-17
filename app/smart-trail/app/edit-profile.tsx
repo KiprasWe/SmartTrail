@@ -37,9 +37,7 @@ export default function EditProfileScreen() {
       setUsername(profile.username ?? "");
       setBio(profile.bio ?? "");
     }
-    // We only want to re-seed inputs when the underlying user id changes,
-    // not when their username/bio mutate from elsewhere mid-edit.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [profile?.id]);
 
   const handleSave = async () => {

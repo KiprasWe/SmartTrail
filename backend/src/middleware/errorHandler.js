@@ -1,7 +1,8 @@
 import { sendError, Errors } from "../utils/responses.js";
+import { isProduction } from "../config/env.js";
 
 export const errorHandler = (err, req, res, next) => {
-  if (process.env.NODE_ENV === "production") {
+  if (isProduction()) {
     console.error(
       JSON.stringify({
         level: "error",

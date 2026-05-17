@@ -44,8 +44,6 @@ import { RouteLayers } from "@/components/route-map/route-layers";
 
 setAccessToken(null);
 
-// Heuristic for "is this a loop?" when genParams doesn't tell us directly
-// (e.g. legacy saved routes): start and end coords within ~50m count as a loop.
 const LOOP_COORD_TOLERANCE = 0.0005;
 function geometryLooksLikeLoop(coords: Coords[]): boolean {
   if (coords.length < 2) return false;
@@ -92,8 +90,6 @@ export default function RouteMapScreen() {
   const [routes, setRoutes] = useState<RouteVariant[]>(payload?.routes ?? []);
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Loop control points are seeded from the initial payload and don't change
-  // client-side — they ride along on POI reroutes to keep the loop's shape stable.
   const loopControlPoints = initialPayload?.controlPoints ?? [];
 
   useEffect(() => {
@@ -103,7 +99,6 @@ export default function RouteMapScreen() {
     }
   }, [payload]);
 
-  // Show the "loop adjusted" alert at most once per screen mount.
   const loopMetaNotifiedRef = useRef(false);
   useEffect(() => {
     if (loopMetaNotifiedRef.current) return;
@@ -118,10 +113,9 @@ export default function RouteMapScreen() {
     if (genParams?.mode === "loop") return true;
     if (genParams?.mode === "ai" && !genParams.end) return true;
     if (payload?.loop_meta) return true;
-    return geometryLooksLikeLoop(variant?.geometry.coordinates ?? []);
+    return geometryLooksLikeLoop(variant?.geometry?.coordinates ?? []);
   }, [genParams, payload, variant]);
 
-  // ── POI reroute (Add / remove from route) ─────────────────────────────────
   const handleVariantUpdated = useCallback(
     (next: RouteVariant) => {
       setRoutes((prev) => {
@@ -129,7 +123,7 @@ export default function RouteMapScreen() {
         arr[selectedIndex] = next;
         return arr;
       });
-      // Re-fit the camera to the new variant on the next selectedIndex effect.
+      
       fittedVariantRef.current = -1;
     },
     [selectedIndex],
@@ -145,9 +139,6 @@ export default function RouteMapScreen() {
       onVariantUpdated: handleVariantUpdated,
     });
 
-  // POIs visible on the map: when there's no genParams (e.g. saved route view)
-  // show every named POI; otherwise filter to the current waypoints + the user's
-  // explicitly-added ones.
   const pois = useMemo(
     () => (variant?.pois ?? []).filter((p) => p.properties.name),
     [variant],
@@ -167,7 +158,6 @@ export default function RouteMapScreen() {
     return [...fromVariant, ...extra];
   }, [genParams, pois, waypoints, waypointPois]);
 
-  // ── Save & export ─────────────────────────────────────────────────────────
   const saveCtrl = useRouteSave({
     variant,
     genParams,
@@ -176,12 +166,10 @@ export default function RouteMapScreen() {
   });
   const exportCtrl = useRouteExport({ variant, routePois });
 
-  // ── Map / camera ──────────────────────────────────────────────────────────
   const cameraRef = useRef<CameraRef>(null);
   const fittedVariantRef = useRef<number>(-1);
   const [mapReady, setMapReady] = useState(false);
 
-  // Top-control state
   const [showPois, setShowPois] = useState(false);
   const [selectedPoi, setSelectedPoi] = useState<PoiFeature | null>(null);
 
@@ -193,7 +181,6 @@ export default function RouteMapScreen() {
     }
   }, []);
 
-  // Auto-fit the camera once per selected variant.
   useEffect(() => {
     if (!variant || !mapReady) return;
     if (fittedVariantRef.current === selectedIndex) return;
@@ -202,7 +189,6 @@ export default function RouteMapScreen() {
     cameraRef.current?.fitBounds([maxLng, maxLat], [minLng, minLat], 60, 400);
   }, [selectedIndex, mapReady, variant]);
 
-  // ── Loading / empty states ────────────────────────────────────────────────
   if (loadingSaved) {
     return (
       <View style={[styles.root, styles.centered, { backgroundColor: c.bg }]}>

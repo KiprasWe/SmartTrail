@@ -1,13 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { DATABASE_URL, isDevelopment } from "./env.js";
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg({ connectionString: DATABASE_URL });
 
 const prisma = new PrismaClient({
-  log:
-    process.env.NODE_ENV === "development"
-      ? ["query", "error", "warn"]
-      : ["error"],
+  log: isDevelopment() ? ["query", "error", "warn"] : ["error"],
   adapter,
 });
 

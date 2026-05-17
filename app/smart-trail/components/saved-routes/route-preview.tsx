@@ -1,7 +1,4 @@
-// Tiny SVG silhouette of a route — used for saved-route list thumbnails
-// (Strava/Komoot style). Takes [lng, lat] coordinates + a bbox and projects
-// them into the given pixel box, preserving aspect ratio at the route's
-// latitude (equirectangular scale via cos(avgLat)).
+
 
 import React, { useMemo } from "react";
 import { View, StyleSheet } from "react-native";
@@ -10,7 +7,7 @@ import type { Coords } from "@/types/route";
 
 interface Props {
   coords: Coords[] | null | undefined;
-  bbox?: [number, number, number, number] | null; // [minLng, minLat, maxLng, maxLat]
+  bbox?: [number, number, number, number] | null; 
   width: number;
   height: number;
   color: string;
@@ -30,7 +27,6 @@ export function RoutePreview({
   const points = useMemo(() => {
     if (!coords || coords.length < 2) return null;
 
-    // Derive bbox from coords if not supplied
     let minLng = bbox?.[0];
     let minLat = bbox?.[1];
     let maxLng = bbox?.[2];
@@ -57,23 +53,18 @@ export function RoutePreview({
     const innerW = Math.max(1, width - padding * 2);
     const innerH = Math.max(1, height - padding * 2);
 
-    // Correct for longitude compression at this latitude — otherwise a
-    // north-south route at 55°N would look ~2x taller than it should relative
-    // to an east-west route of the same straight-line distance.
     const avgLat = (minLat + maxLat) / 2;
     const lngScale = Math.cos((avgLat * Math.PI) / 180);
 
     const spanX = Math.max(1e-9, (maxLng - minLng) * lngScale);
     const spanY = Math.max(1e-9, maxLat - minLat);
 
-    // Fit the whole route inside the box with uniform scale + center
     const scale = Math.min(innerW / spanX, innerH / spanY);
     const drawW = spanX * scale;
     const drawH = spanY * scale;
     const offsetX = padding + (innerW - drawW) / 2;
     const offsetY = padding + (innerH - drawH) / 2;
 
-    // Flip Y (north = up)
     const projected: [number, number][] = coords.map(([lng, lat]) => [
       offsetX + (lng - minLng!) * lngScale * scale,
       offsetY + drawH - (lat - minLat!) * scale,
@@ -101,14 +92,14 @@ export function RoutePreview({
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        {/* Start dot */}
+        
         <Circle
           cx={points.start[0]}
           cy={points.start[1]}
           r={strokeWidth}
           fill={color}
         />
-        {/* End dot (hollow) */}
+        
         <Circle
           cx={points.end[0]}
           cy={points.end[1]}

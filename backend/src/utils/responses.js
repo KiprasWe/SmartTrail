@@ -18,7 +18,6 @@ export const Errors = {
   EXTERNAL_SERVICE_ERROR: { code: "EXTERNAL_SERVICE_ERROR", status: 502 },
   INTERNAL_SERVER_ERROR: { code: "INTERNAL_SERVER_ERROR", status: 500 },
 
-  // Routes
   ROUTE_NOT_FOUND: { code: "ROUTE_NOT_FOUND", status: 404 },
   AI_GENERATION_FAILED: { code: "AI_GENERATION_FAILED", status: 502 },
   ROUTE_ACCESS_DENIED: { code: "ROUTE_ACCESS_DENIED", status: 403 },

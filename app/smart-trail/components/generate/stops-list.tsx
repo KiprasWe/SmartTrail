@@ -18,8 +18,7 @@ type Props = {
   onRemoveStop: (id: string) => void;
   onAddStop: () => void;
   colors: (typeof Colors)["light" | "dark"];
-  /** When true, render stops directly (used inline inside AI card) without
-   * wrapping in its own card. Otherwise wraps stops + "Add stop" in a card. */
+  
   embedded?: boolean;
 };
 

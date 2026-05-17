@@ -63,7 +63,6 @@ export function ElevationProfile({
 
   if (!elevations.length) return null;
 
-  // Derive a semi-transparent fill from the tint color
   const tint = c.tint;
   const gridColor = c.border;
 

@@ -1,10 +1,11 @@
 import { fetchWithRetry } from "../utils/http.js";
 import { haversineM } from "./geo.js";
-import { ORS_MATRIX_URL } from "./ors.js";
+import { HELD_KARP_LIMIT } from "../config/tuning.js";
+import { ORS_API_KEY, ORS_MATRIX_URL } from "../config/env.js";
 
-const ORS_API_KEY = process.env.ORS_API_KEY;
-const HELD_KARP_LIMIT = 9;
-
+// Exported, but currently only consumed internally by solveTspLoop.
+// Calls the ORS matrix API to get all pairwise distances/durations between
+// the given locations (the cost matrix the TSP solvers work on).
 export async function fetchORSMatrix(orsProfile, locations) {
   if (!ORS_API_KEY) throw new Error("ORS_API_KEY is not set");
   if (locations.length < 2) throw new Error("matrix needs ≥ 2 points");
@@ -35,6 +36,9 @@ export async function fetchORSMatrix(orsProfile, locations) {
   return { distances: json.distances ?? [], durations: json.durations ?? [] };
 }
 
+// Used by solveTspLoop (when stop count <= HELD_KARP_LIMIT).
+// Exact TSP solver via Held-Karp dynamic programming — optimal stop order,
+// but O(2^n · n²), hence only for small stop counts.
 function heldKarp(distMatrix) {
   const N = distMatrix.length;
   if (N <= 2) {
@@ -94,6 +98,8 @@ function heldKarp(distMatrix) {
   return { order, distance: bestCost };
 }
 
+// Used by solveTspLoop (when stop count > HELD_KARP_LIMIT, as the twoOpt seed).
+// Cheap greedy tour: from current node, always hop to the nearest unvisited.
 function nearestNeighbor(distMatrix) {
   const N = distMatrix.length;
   const visited = new Uint8Array(N);
@@ -120,6 +126,8 @@ function nearestNeighbor(distMatrix) {
   return { order, distance: total };
 }
 
+// Used by twoOpt.
+// Total round-trip cost of a tour: depot(0) -> order... -> back to depot(0).
 function tourCost(distMatrix, order) {
   let cost = distMatrix[0][order[0]];
   for (let i = 0; i < order.length - 1; i++) {
@@ -129,6 +137,9 @@ function tourCost(distMatrix, order) {
   return cost;
 }
 
+// Used by solveTspLoop (large stop counts, seeded by nearestNeighbor).
+// 2-opt local search: repeatedly reverse tour segments while it lowers cost
+// (up to 20 passes) — approximate but fast for many stops.
 function twoOpt(distMatrix, initialOrder) {
   const order = [...initialOrder];
   let improved = true;
@@ -162,6 +173,10 @@ function twoOpt(distMatrix, initialOrder) {
   return { order, distance: tourCost(distMatrix, order) };
 }
 
+// Exported — the module's main entry point.
+// Used by loop-algo.js (generateLoopWithStops). Fetches the ORS cost matrix,
+// fills missing entries with a haversine estimate, then solves stop order
+// exactly (heldKarp) or approximately (nearestNeighbor + twoOpt) by size.
 export async function solveTspLoop(start, stops, orsProfile) {
   if (!stops?.length) {
     return {
@@ -175,18 +190,27 @@ export async function solveTspLoop(start, stops, orsProfile) {
   const locs = [start, ...stops];
   const { distances, durations } = await fetchORSMatrix(orsProfile, locs);
 
+  let nullFilled = 0;
+  const totalCells = locs.length * locs.length;
   for (let i = 0; i < locs.length; i++) {
     for (let j = 0; j < locs.length; j++) {
       if (distances[i]?.[j] == null) {
         distances[i][j] = haversineM(locs[i], locs[j]) * 1.4;
+        nullFilled++;
       }
     }
   }
+  console.log(
+    `[tsp] matrix ${locs.length}x${locs.length}: ${nullFilled}/${totalCells} cells haversine-filled (${((nullFilled / totalCells) * 100).toFixed(0)}%)`,
+  );
 
   const result =
     stops.length <= HELD_KARP_LIMIT
       ? heldKarp(distances)
       : twoOpt(distances, nearestNeighbor(distances).order);
+  console.log(
+    `[tsp] solved: ${stops.length} stops, minDistance=${(result.distance / 1000).toFixed(2)}km (solver=${stops.length <= HELD_KARP_LIMIT ? "heldKarp" : "twoOpt"})`,
+  );
 
   const orderedStops = result.order.map((idx) => stops[idx - 1]);
 

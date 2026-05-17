@@ -22,10 +22,6 @@ export type UseRouteExportResult = {
   confirm: () => Promise<void>;
 };
 
-/**
- * Drives the GPX export dialog: filename state + the actual share-sheet call.
- * Routes the user's POIs into GPX waypoints (for nav apps that honour them).
- */
 export function useRouteExport({
   variant,
   routePois,

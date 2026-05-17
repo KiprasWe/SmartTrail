@@ -9,7 +9,7 @@ type Args = {
   variant: RouteVariant | null;
   genParams: GenParams | null;
   routePois: PoiFeature[];
-  /** id of the saved route if this screen was opened from one. */
+  
   initialSavedId?: string;
 };
 
@@ -26,11 +26,6 @@ export type UseRouteSaveResult = {
   save: () => Promise<void>;
 };
 
-/**
- * Manages the "Save route" modal: form state, the default-title heuristic,
- * and the optimistic save call. Once a route is saved (or was opened from
- * a saved id), `savedRouteId` flips so the bookmark icon goes solid.
- */
 export function useRouteSave({
   variant,
   genParams,

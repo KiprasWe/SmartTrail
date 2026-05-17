@@ -35,8 +35,6 @@ import {
 import { TRANSPORT_OPTIONS } from "@/components/generate/route-form-components";
 import { Avatar } from "@/components/ui/avatar";
 
-// Older saved routes stored display labels instead of profile keys; map them
-// back so we can still pick the right icon and translation.
 const LEGACY_LABEL_TO_KEY: Record<string, string> = {
   Walking: "foot-walking",
   Hiking: "foot-hiking",

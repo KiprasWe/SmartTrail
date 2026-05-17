@@ -26,42 +26,26 @@ function sameCoords(
   return a.coords.lat === b.coords.lat && a.coords.lng === b.coords.lng;
 }
 
-/**
- * Parses a custom distance entered by the user. Tolerates locale-specific
- * decimal separators (e.g. "1,5" used in lt-LT for 1.5 km).
- */
 function parseCustomDistance(raw: string): number {
   return parseFloat(raw.replace(",", "."));
 }
 
-/**
- * Centralises every piece of state on the Generate screen — locations for the
- * three tabs, the must-stop list, shared form fields (transport / elevation /
- * POI selection / distance), and the active search-sheet target.
- *
- * Exposing it as one hook lets the screen stay almost purely presentational
- * and gives `handleGenerate` a tiny dependency footprint.
- */
 export function useGenerateForm() {
   const [tab, setTab] = useState<TabKey>("a_to_b");
 
-  // Last-known coords from the user — used to bias Photon search by location.
   const [userCoords, setUserCoords] = useState<{
     lat: number;
     lng: number;
   } | null>(null);
 
-  // A → B
   const [startLocation, setStartLocation] = useState<ResolvedLocation | null>(
     null,
   );
   const [endLocation, setEndLocation] = useState<ResolvedLocation | null>(null);
 
-  // Round trip
   const [roundStartLocation, setRoundStartLocation] =
     useState<ResolvedLocation | null>(null);
 
-  // AI
   const [aiStartLocation, setAiStartLocation] =
     useState<ResolvedLocation | null>(null);
   const [aiEndLocation, setAiEndLocation] = useState<ResolvedLocation | null>(
@@ -73,7 +57,6 @@ export function useGenerateForm() {
   const [mustStops, setMustStops] = useState<MustStop[]>([]);
   const [searchTarget, setSearchTarget] = useState<SearchTarget | null>(null);
 
-  // Shared form fields
   const [transport, setTransport] = useState<TransportKey>("foot-walking");
   const [elevation, setElevation] = useState<ElevationKey>("moderate");
   const [selectedPoi, setSelectedPoi] = useState<Set<string>>(new Set());
@@ -81,14 +64,13 @@ export function useGenerateForm() {
   const [distance, setDistance] = useState<DistanceKey>("10");
   const [customDistanceText, setCustomDistanceText] = useState("");
 
-  // ── Location selection ────────────────────────────────────────────────────
   const handleLocationSelected = useCallback(
     (location: ResolvedLocation) => {
       if (!searchTarget) return;
       setUserCoords(location.coords);
 
       if (searchTarget === "start") {
-        // Picking the same point as end auto-switches the screen to round-trip.
+        
         if (sameCoords(endLocation, location)) {
           setTab("round_trip");
           setRoundStartLocation(location);
@@ -133,7 +115,6 @@ export function useGenerateForm() {
     [searchTarget, startLocation, endLocation, aiMode, aiStartLocation, aiEndLocation],
   );
 
-  // ── Stops ────────────────────────────────────────────────────────────────
   const addStop = useCallback(() => {
     setMustStops((prev) => [
       ...prev,
@@ -158,7 +139,6 @@ export function useGenerateForm() {
     });
   }, []);
 
-  // ── Validation ───────────────────────────────────────────────────────────
   const customDistanceKm = parseCustomDistance(customDistanceText);
   const customDistanceValid =
     distance !== "custom" ||
@@ -176,24 +156,24 @@ export function useGenerateForm() {
           (aiMode === "a_to_b" ? !!aiEndLocation : customDistanceValid);
 
   return {
-    // tab
+    
     tab,
     setTab,
-    // search
+    
     searchTarget,
     setSearchTarget,
     sheetVisible: searchTarget !== null,
     userCoords,
     handleLocationSelected,
-    // a→b
+    
     startLocation,
     setStartLocation,
     endLocation,
     setEndLocation,
-    // round
+    
     roundStartLocation,
     setRoundStartLocation,
-    // ai
+    
     aiStartLocation,
     setAiStartLocation,
     aiEndLocation,
@@ -202,12 +182,12 @@ export function useGenerateForm() {
     setAiPrompt,
     aiMode,
     setAiMode,
-    // stops
+    
     mustStops,
     addStop,
     removeStop,
     clearStopLocation,
-    // shared form
+    
     transport,
     setTransport,
     elevation,
@@ -220,7 +200,7 @@ export function useGenerateForm() {
     setDistance,
     customDistanceText,
     setCustomDistanceText,
-    // validation
+    
     canGenerate,
   };
 }

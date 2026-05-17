@@ -18,9 +18,6 @@ type Result = {
   loading: boolean;
 };
 
-// Resolves the route payload when the screen was opened from a saved-route id
-// (cache-first so it works offline). For direct-payload navigation, the initial
-// payload is returned as-is.
 export function useLoadedRoute({ savedId, initialPayload }: Params): Result {
   const getSavedById = useSavedRoutesStore((s) => s.getById);
 

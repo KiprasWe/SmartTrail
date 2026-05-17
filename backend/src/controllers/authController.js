@@ -9,8 +9,9 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { Errors, Success, sendError, sendSuccess } from "../utils/responses.js";
 import { OAuth2Client } from "google-auth-library";
 import crypto from "crypto";
+import { GOOGLE_CLIENT_ID } from "../config/env.js";
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const buildTokenPair = async (userId) => ({
   accessToken: generateAccessToken(userId),
@@ -34,7 +35,7 @@ export const googleAuth = asyncHandler(async (req, res) => {
   try {
     const ticket = await googleClient.verifyIdToken({
       idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: GOOGLE_CLIENT_ID,
     });
     payload = ticket.getPayload();
   } catch {
@@ -43,7 +44,6 @@ export const googleAuth = asyncHandler(async (req, res) => {
 
   const { sub: googleId, email, name } = payload;
 
-  // OAuth jau susietas
   const existingOAuth = await prisma.oAuthAccount.findUnique({
     where: {
       provider_providerId: { provider: "google", providerId: googleId },
@@ -61,7 +61,7 @@ export const googleAuth = asyncHandler(async (req, res) => {
   const existingUser = await prisma.user.findUnique({ where: { email } });
 
   if (existingUser) {
-    // email sutampa, bet nera google oauth paskyros
+    
     await prisma.oAuthAccount.create({
       data: {
         provider: "google",
@@ -77,7 +77,6 @@ export const googleAuth = asyncHandler(async (req, res) => {
     });
   }
 
-  // naujas useris, uzreginam
   const newUser = await prisma.user.create({
     data: {
       email,
@@ -97,7 +96,6 @@ export const googleAuth = asyncHandler(async (req, res) => {
 
 export const signup = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
-  // passworda tikrinam su zod schema
 
   const [emailTaken, usernameTaken] = await Promise.all([
     prisma.user.findUnique({ where: { email } }),
@@ -125,7 +123,6 @@ export const signin = asyncHandler(async (req, res) => {
 
   const user = await prisma.user.findUnique({ where: { email } });
 
-  // Nera userio arba neturi passwordo
   if (!user || !user.password) {
     return sendError(res, Errors.INVALID_LOGIN);
   }

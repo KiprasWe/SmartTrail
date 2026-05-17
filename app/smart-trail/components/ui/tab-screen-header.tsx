@@ -10,7 +10,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { ReactNode } from "react";
 import { Colors } from "@/constants/theme";
 
-/** Typography + spacing shared by Generate, Discover, and Profile top bars. */
 export const mainTabScreenTitleStyle = {
   fontSize: 24,
   fontWeight: "700" as const,
@@ -23,16 +22,13 @@ export const mainTabHeaderBottomPadding = 12;
 
 export type TabScreenHeaderProps = {
   title: string;
-  /** Trailing controls (e.g. map/list toggle, profile actions). */
+  
   right?: ReactNode;
-  /** Full-width block under the title row (e.g. Generate mode tabs). */
+  
   footer?: ReactNode;
   style?: StyleProp<ViewStyle>;
 };
 
-/**
- * Fixed top bar for main tabs: consistent padding, title weight, and bottom hairline.
- */
 export function TabScreenHeader({
   title,
   right,
@@ -100,7 +96,6 @@ const styles = StyleSheet.create({
   },
 });
 
-/** Square icon targets in tab headers (Discover map/list, Profile actions). */
 export const mainTabHeaderIconHitStyle = StyleSheet.create({
   base: {
     width: 36,

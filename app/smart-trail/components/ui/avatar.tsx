@@ -1,14 +1,14 @@
 import { View, Text, StyleSheet, type ViewStyle } from "react-native";
 
 type Props = {
-  /** Source of the initials. We take the first letter of the first two words. */
+  
   name: string | null | undefined;
   size?: number;
-  /** Background colour of the avatar circle. Defaults to the brand green. */
+  
   backgroundColor?: string;
-  /** Colour of the initials. Defaults to white. */
+  
   textColor?: string;
-  /** Optional 1px border colour. */
+  
   borderColor?: string;
   style?: ViewStyle;
 };
@@ -25,11 +25,6 @@ function initialsFor(name: string | null | undefined): string {
   return letters || trimmed[0]?.toUpperCase() || "?";
 }
 
-/**
- * Local, network-free avatar that renders the user's initials over a coloured
- * circle. Used in the profile / edit-profile screens — no external HTTP
- * fetch, works fully offline.
- */
 export function Avatar({
   name,
   size = 88,

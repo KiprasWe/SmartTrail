@@ -34,7 +34,6 @@ function RootLayoutNav() {
         useSavedRoutesStore.getState().bootstrap();
       }
     });
-
   }, []);
 
   if (isLoading) {

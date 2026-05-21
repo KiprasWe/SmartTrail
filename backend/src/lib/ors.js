@@ -13,9 +13,6 @@ import {
   ORS_MATRIX_URL,
 } from "../config/env.js";
 
-// Exported. Used by routeController, routeEditController, loop-algo, poi-splice, ai/waypoints.
-// Core routing call: POSTs coordinates to the ORS directions API and returns
-// the raw GeoJSON response (one route through the given points).
 export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
   if (!ORS_API_KEY) throw new Error("ORS_API_KEY is not set");
 
@@ -60,14 +57,45 @@ export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
         `bodyKeys=${Object.keys(body).join(",")} ` +
         `response=${bodyExcerpt}`,
     );
+
+    const dropped = opts._droppedCount ?? 0;
+    const badIdx = parseUnroutableCoordIndex(text);
+    if (
+      badIdx != null &&
+      badIdx > 0 &&
+      badIdx < coordinates.length - 1 &&
+      dropped < 3
+    ) {
+      console.warn(
+        `[ORS directions] dropping unroutable coord idx=${badIdx} ` +
+          `(${coordinates[badIdx].join(",")}) and retrying`,
+      );
+      const next = coordinates
+        .slice(0, badIdx)
+        .concat(coordinates.slice(badIdx + 1));
+      const nextOpts = { ...opts, _droppedCount: dropped + 1 };
+      if (
+        Array.isArray(opts.radiuses) &&
+        opts.radiuses.length === coordinates.length
+      ) {
+        nextOpts.radiuses = opts.radiuses
+          .slice(0, badIdx)
+          .concat(opts.radiuses.slice(badIdx + 1));
+      }
+      return fetchORSDirections(orsProfile, next, nextOpts);
+    }
+
     throw new Error(`ORS ${res.status} on ${orsProfile}: ${bodyExcerpt}`);
   }
   return res.json();
 }
 
-// Exported. Used by routeController, routeEditController, loop-algo, poi-splice, ai/pipeline.
-// Normalizes a raw ORS GeoJSON feature into the app's routeData shape
-// (coords, elevation array, distance/duration/ascent/descent).
+function parseUnroutableCoordIndex(bodyText) {
+  if (!bodyText) return null;
+  const m = /coordinate\s+(\d+)\s*:/i.exec(bodyText);
+  return m ? Number(m[1]) : null;
+}
+
 export function orsFeatureToRouteData(feature) {
   const rawCoords = feature.geometry.coordinates;
   const coords = rawCoords.map((c) => [c[0], c[1]]);
@@ -99,9 +127,6 @@ export function orsFeatureToRouteData(feature) {
   };
 }
 
-// Exported, but currently only consumed internally by buildProfileOpts.
-// Maps an elevation preference (flat/moderate/hilly) to ORS request options —
-// steepness weightings for cycling, avoid-features for walking.
 export function buildORSElevationOpts(elevPref, orsProfile = "") {
   const isCycling = orsProfile.startsWith("cycling");
 
@@ -109,7 +134,7 @@ export function buildORSElevationOpts(elevPref, orsProfile = "") {
     if (isCycling)
       return { profileParams: { weightings: { steepness_difficulty: 0 } } };
 
-    return { options: { avoid_features: ["steps"] } };
+    return { options: { avoid_features: ["steps", "fords"] } };
   }
 
   if (elevPref === "moderate") {
@@ -121,15 +146,12 @@ export function buildORSElevationOpts(elevPref, orsProfile = "") {
   if (elevPref === "hilly") {
     if (isCycling)
       return { profileParams: { weightings: { steepness_difficulty: 3 } } };
-    return {};
+    return { profileParams: { weightings: { green: 0.8 } } };
   }
 
   return {};
 }
 
-// Exported. Used by routeController, routeEditController, ai/pipeline.
-// Merges a profile's base config with elevation-preference options into the
-// final ORS opts object (preference + avoid_features + weightings).
 export function buildProfileOpts(profileConfig, elevPref) {
   const elevOpts = buildORSElevationOpts(elevPref, profileConfig.orsProfile);
   const avoidFeatures = [
@@ -151,9 +173,6 @@ export function buildProfileOpts(profileConfig, elevPref) {
   };
 }
 
-// Exported. Used by poi-select.js (fetchPoiFeatures).
-// Queries the ORS POI service along a route corridor, chunking the polyline
-// and category groups across parallel requests and de-duping by OSM id.
 export async function fetchRoutePois(
   routeCoords,
   { groupIds = [], categoryIds = [] } = {},
@@ -246,9 +265,6 @@ export async function fetchRoutePois(
   return all;
 }
 
-// Exported. Used by poi-select.js and ai/pipeline.js.
-// Drops POIs whose routed distance from the route is implausibly longer than
-// straight-line (barrier-blocked / unreachable), batching via _matrixFilterBatch.
 export async function filterUnreachablePois(
   orsProfile,
   anchorCoords,
@@ -271,9 +287,6 @@ export async function filterUnreachablePois(
   return result;
 }
 
-// Used by filterUnreachablePois (one batch of POIs at a time).
-// ORS matrix call from route anchors to POIs; keeps a POI if its routed/
-// straight-line distance ratio stays under the threshold. Fails open (keeps all).
 async function _matrixFilterBatch(orsProfile, anchors, pois, ratioThreshold) {
   const locations = [
     ...anchors.map(([lng, lat]) => [lng, lat]),

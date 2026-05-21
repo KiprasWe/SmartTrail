@@ -107,9 +107,6 @@ export async function exportGpx(
   const rawName = filenameOverride?.trim() || safeFilename(input.title);
   const filename = rawName.endsWith(".gpx") ? rawName : `${rawName}.gpx`;
 
-  // Write to cache, then open the native share sheet.
-  // On Android the user can save to Downloads, Drive, etc.
-  // On iOS they get Files, AirDrop, etc.
   const file = new File(Paths.cache, filename);
   if (file.exists) file.delete();
   file.create();

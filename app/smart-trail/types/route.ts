@@ -1,4 +1,4 @@
-export type Coords = [number, number]; 
+export type Coords = [number, number];
 
 export type ElevationProfile = number[];
 
@@ -35,10 +35,10 @@ export interface SavedRouteListItem {
   title: string;
   description: string | null;
   transport: string;
-  distance: number; 
-  duration: number; 
-  ascent: number | null; 
-  descent: number | null; 
+  distance: number;
+  duration: number;
+  ascent: number | null;
+  descent: number | null;
   bbox: [number, number, number, number];
   variantLabel: string | null;
   isFavorite: boolean;

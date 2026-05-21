@@ -3,19 +3,6 @@ import { calcDuration } from "./profiles.js";
 import { fetchORSDirections, orsFeatureToRouteData } from "./ors.js";
 import { SPLICE_BUFFER_M } from "../config/tuning.js";
 
-// Pure splice primitive shared by the manual add-POI controller
-// (routeEditController.splicePoi) and the AI loop pipeline (Option C —
-// folding nearby curated essentials into an already-routed loop).
-//
-// Finds the route vertex closest to `poi`, walks SPLICE_BUFFER_M outward to
-// pick anchors A and B, ORS-routes A->poi and poi->B, and splices that
-// detour into the polyline in place of the A..B span. Distance / elevation /
-// duration are recomputed incrementally (the untouched portion of the route
-// is never re-fetched).
-//
-// Returns the new route stats plus `detour_delta_km` (added length =
-// segA + segB - replacedDist) so callers can gate on detour cost.
-// Throws on ORS failure — the caller decides whether to skip or surface.
 export async function splicePoiIntoRoute({
   routeCoords,
   elevArr,

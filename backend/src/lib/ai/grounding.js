@@ -4,8 +4,6 @@ const GROUNDING_SYSTEM =
   "You are a geographic assistant. Use Google Maps to find the exact coordinates of requested places. " +
   "Return only valid JSON — no explanation, no markdown, no extra text.";
 
-// Used by resolveNamedPlacesWithGrounding.
-// Coerces n to a finite number clamped to [lo, hi] (lo on non-finite).
 function clamp(n, lo, hi) {
   const x = Number(n);
   if (!Number.isFinite(x)) return lo;
@@ -22,9 +20,6 @@ function bboxToHint(bbox) {
   return { minLng, minLat, maxLng, maxLat };
 }
 
-// Used by resolveNamedPlacesWithGrounding.
-// Normalizes a Maps grounding candidate into our POI shape (essential +
-// _userNamed); returns null if it lacks valid coords/name.
 function toPoiFromMaps(item) {
   const lat = Number(item.lat);
   const lng = Number(item.lng);
@@ -67,9 +62,6 @@ function toPoiFromMaps(item) {
   };
 }
 
-// Exported — module entry point. Used by ai/pipeline.js.
-// Resolves user-named places to coordinates via a Gemini + Google Maps
-// grounding call, returning them as user-named POIs (empty [] on failure).
 export async function resolveNamedPlacesWithGrounding(
   namedPlaces,
   start,

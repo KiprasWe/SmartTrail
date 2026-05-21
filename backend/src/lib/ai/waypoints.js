@@ -1,9 +1,6 @@
 import { haversineM } from "../geo.js";
 import { fetchORSDirections } from "../ors.js";
 
-// Exported. Used by pipeline.js (A→B trips).
-// Orders POIs by their projection onto the start->end line so stops
-// progress naturally from origin to destination.
 export function sortPoisAlongLine(pois, start, end) {
   const [sx, sy] = start;
   const dx = end[0] - sx,
@@ -15,9 +12,6 @@ export function sortPoisAlongLine(pois, start, end) {
     .map(({ p }) => p);
 }
 
-// Exported. Used by pipeline.js (loop trips).
-// Greedy nearest-neighbor order from `start` — a sane visit sequence for
-// loop stops before routing.
 export function sortPoisAroundLoop(pois, start) {
   if (pois.length <= 1) return [...pois];
   const remaining = [...pois];
@@ -44,9 +38,6 @@ export function sortPoisAroundLoop(pois, start) {
   return sorted;
 }
 
-// Exported. Used by pipeline.js.
-// Maps an internal enriched POI into the GeoJSON Point feature shape the
-// API/frontend consumes.
 export function enrichedPoiToFeature(poi, i) {
   return {
     type: "Feature",
@@ -73,9 +64,6 @@ export function enrichedPoiToFeature(poi, i) {
   };
 }
 
-// Exported. Used by pipeline.js (A→B routing).
-// Routes start->mids->end via ORS; on an ORS 2010 "unroutable coordinate"
-// error it drops that waypoint (never a protected one) and retries.
 export async function fetchORSWithFallback(
   orsProfile,
   startCoord,

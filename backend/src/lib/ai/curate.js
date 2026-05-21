@@ -8,9 +8,6 @@ import {
   extractJsonArray,
 } from "./shared.js";
 
-// Used by tourGuideCurate.
-// Recovers the real place_id when the model returns a shortened/typo'd
-// "ors:N" id by treating N as a 1-based index into pois (rejects unsafe N).
 function resolveCuratePlaceId(rawId, pois, byId) {
   if (!rawId || typeof rawId !== "string") return null;
   const id = rawId.trim();
@@ -26,9 +23,6 @@ function resolveCuratePlaceId(rawId, pois, byId) {
   return candidate && String(candidate) !== id ? candidate : null;
 }
 
-// Used by buildCurationPrompt.
-// Returns the mode-specific prompt label + instruction block for
-// category / named / mixed curation modes.
 function buildModeCurationContext(mode, namedPois, preferences) {
   switch (mode) {
     case "category":
@@ -87,8 +81,6 @@ function buildModeCurationContext(mode, namedPois, preferences) {
   }
 }
 
-// Used by tourGuideCurate as the Gemini responseJsonSchema.
-// Output shape per curated stop: place_id + guide_note + essential.
 const CURATION_SCHEMA = {
   type: Type.ARRAY,
   items: {
@@ -116,9 +108,6 @@ const CURATION_SCHEMA = {
   },
 };
 
-// Used by tourGuideCurate.
-// Builds the curation prompt: trip desc + mode block + POI list (tagging
-// user-requested anchors) + distance-scaled essential-stop budget.
 function buildCurationPrompt({
   pois,
   profileLabel,
@@ -195,10 +184,6 @@ function buildCurationPrompt({
     .join("\n");
 }
 
-// Exported — module entry point. Used by ai/pipeline.js.
-// One Gemini call that picks/annotates the best stops from candidate POIs;
-// resolves typo'd ids, drops bad curations, re-injects user-named anchors.
-// Returns null (caller falls back) on missing AI / parse failure / low match.
 export async function tourGuideCurate({
   pois,
   profileLabel,

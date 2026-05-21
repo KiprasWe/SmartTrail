@@ -24,9 +24,6 @@ const ORS_CATEGORY_MAP = {
   },
 };
 
-// Used by fetchPoiFeatures.
-// Maps requested poi type strings to merged ORS {groupIds, categoryIds,
-// catFilters} via ORS_CATEGORY_MAP.
 function buildPoiParams(poiTypes) {
   const groupSet = new Set();
   const catSet = new Set();
@@ -41,9 +38,6 @@ function buildPoiParams(poiTypes) {
   return { groupIds: [...groupSet], categoryIds: [...catSet], catFilters };
 }
 
-// Used by fetchPoiFeatures.
-// Drops ORS features whose in-range category ids aren't in the allowed set
-// (e.g. narrowing the broad "leisure" group).
 function applyCatFilters(features, catFilters) {
   if (!catFilters.length) return features;
   return features.filter((f) => {
@@ -55,9 +49,6 @@ function applyCatFilters(features, catFilters) {
   });
 }
 
-// Used by fetchPoiFeatures.
-// Normalizes a raw ORS POI feature into a slim {id, name, category} Point
-// feature; returns null if it has no coords.
 function normOrsPoiFeature(feature, idx) {
   const coords = feature.geometry?.coordinates;
   if (!Array.isArray(coords) || coords.length < 2) return null;
@@ -83,9 +74,6 @@ function normOrsPoiFeature(feature, idx) {
   };
 }
 
-// Exported. Used by routeController (loop + A-to-B POI flows).
-// Drops POIs that aren't actually reachable from the route (samples ~10
-// route anchors, delegates to ors.filterUnreachablePois).
 export async function filterPoiFeaturesByReachability(
   features,
   routeCoords,
@@ -114,8 +102,6 @@ export async function filterPoiFeaturesByReachability(
   );
 }
 
-// Used by geminiSelectPois.
-// Returns 0-100% position of a POI along the route (nearest route point).
 function poiRouteProgress(poiCoords, routeCoords) {
   let minDist = Infinity;
   let closestIdx = 0;
@@ -129,9 +115,6 @@ function poiRouteProgress(poiCoords, routeCoords) {
   return Math.round((closestIdx / Math.max(routeCoords.length - 1, 1)) * 100);
 }
 
-// Exported. Used by routeController (loop + A-to-B POI flows).
-// Asks Gemini to pick the `count` best, well-spread POIs; falls back to
-// rankAndLimitPoisFallback if AI is unavailable or fails.
 export async function geminiSelectPois(pois, count, routeCoords) {
   if (!count || pois.length <= count) return pois;
   if (!genai) return rankAndLimitPoisFallback(pois, count, routeCoords);
@@ -194,8 +177,6 @@ export async function geminiSelectPois(pois, count, routeCoords) {
   }
 }
 
-// Used by geminiSelectPois (fallback path).
-// Scores POIs by quality minus detour cost and keeps the top `count`.
 function rankAndLimitPoisFallback(pois, count, routeCoords) {
   if (!count || pois.length <= count) return pois;
   const anchors = thinForInsertion(routeCoords, 50);
@@ -211,9 +192,6 @@ function rankAndLimitPoisFallback(pois, count, routeCoords) {
     .map((r) => r.feature);
 }
 
-// Exported. Used by routeController (loop + A-to-B POI flows).
-// Full POI fetch pipeline: type->ORS params -> fetchRoutePois -> cat
-// filter -> normalize to named Point features.
 export async function fetchPoiFeatures(routeCoords, poiTypes) {
   if (!poiTypes.length) return [];
   const { groupIds, categoryIds, catFilters } = buildPoiParams(poiTypes);
@@ -232,8 +210,6 @@ export async function fetchPoiFeatures(routeCoords, poiTypes) {
   return normed;
 }
 
-// Used by rankAndLimitPoisFallback.
-// Uniformly downsamples route coords to `samples` insertion anchors.
 function thinForInsertion(coords, samples = 50) {
   if (coords.length <= samples) return coords;
   const step = (coords.length - 1) / (samples - 1);
@@ -243,8 +219,6 @@ function thinForInsertion(coords, samples = 50) {
   );
 }
 
-// Used by rankAndLimitPoisFallback.
-// Min extra metres to detour the route through a POI (cheapest insertion).
 function cheapestInsertionAddedM(poi, anchors) {
   let best = Infinity;
   for (let i = 0; i < anchors.length - 1; i++) {
@@ -256,8 +230,6 @@ function cheapestInsertionAddedM(poi, anchors) {
   return Math.max(0, best);
 }
 
-// Used by rankAndLimitPoisFallback.
-// Heuristic interest score from rating/reviews + category bonuses.
 function poiQualityScore(poi) {
   const rating = poi.properties.rating ?? 0;
   const reviews = poi.properties.user_rating_count ?? 0;

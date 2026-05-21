@@ -63,7 +63,6 @@ export const loopSchema = z.object({
   poiTypes: z.array(poiTypeEnum).max(6).optional().default([]),
   poiCount: z.number().int().min(0).max(20).optional().default(0),
   waypoints: z.array(lngLat).max(10).optional().default([]),
-  controlPoints: z.array(lngLat).max(20).optional().default([]),
 });
 
 export const splicePoiSchema = z.object({

@@ -33,9 +33,6 @@ import {
 } from "./waypoints.js";
 import { resolveNamedPlacesWithGrounding } from "./grounding.js";
 
-// Used by pickLoopTravelHeading.
-// Parses an EN/LT directional phrase from free text into a 1-8 compass
-// heading (0 = none), e.g. "south of the city" -> 5.
 function inferTravelHeadingFromText(text, lang = "en") {
   if (!text || typeof text !== "string") return 0;
   const t = text.toLowerCase();
@@ -60,9 +57,6 @@ function inferTravelHeadingFromText(text, lang = "en") {
   return 0;
 }
 
-// Used by runAiPipeline (loop trips only).
-// Prefers a travel_heading from the classified intents, else infers one
-// from the raw preferences text.
 function pickLoopTravelHeading({ preferences, intents, lang }) {
   const fromIntents = Array.isArray(intents)
     ? intents.find((i) => Number(i?.travel_heading) > 0)?.travel_heading
@@ -72,13 +66,6 @@ function pickLoopTravelHeading({ preferences, intents, lang }) {
   return inferTravelHeadingFromText(preferences, lang);
 }
 
-// Exported — the AI routing orchestrator. Used by aiRouteController.js
-// (and mocked in controller tests).
-// End-to-end stages: geocode start/end -> classifyAndDecompose (mode +
-// intents) -> ground named places + searchAreaByCategories -> reachability
-// filter -> tourGuideCurate (with rating-rank fallback) -> sort + cap
-// waypoints -> route via fetchORSWithFallback (A→B) or generateLoop.
-// onStage(name, meta?) reports progress; throws PipelineError on failure.
 export async function runAiPipeline(params, { onStage = () => {} } = {}) {
   const {
     start,

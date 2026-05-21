@@ -21,8 +21,6 @@ const ALLOWED_ORS_GROUPS = [
   "tourism",
 ];
 
-// Embedded in CLASSIFY_DECOMPOSE_SCHEMA.
-// Gemini response schema for a single POI search intent.
 const INTENT_SCHEMA = {
   type: Type.ARRAY,
   items: {
@@ -68,8 +66,6 @@ const INTENT_SCHEMA = {
   },
 };
 
-// Used by classifyAndDecompose as the Gemini responseJsonSchema.
-// Full structured-output shape: mode + named_places + has_categories + intents.
 const CLASSIFY_DECOMPOSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
@@ -82,9 +78,6 @@ const CLASSIFY_DECOMPOSE_SCHEMA = {
   propertyOrdering: ["mode", "named_places", "has_categories", "intents"],
 };
 
-// Used by classifyAndDecompose.
-// Assembles the big classify+intents Gemini prompt from trip context,
-// type/subcategory mapping tables, and language instructions.
 function buildPrompt({
   profileLabel,
   preferences,
@@ -210,9 +203,6 @@ function buildPrompt({
     .join("\n");
 }
 
-// Used by classifyAndDecompose.
-// Sanitizes/coerces raw Gemini intents: clamps fields, drops unknown
-// groups/subcategories, caps at 6 intents.
 function normalizeIntents(parsed) {
   if (!Array.isArray(parsed)) return [];
   const allowed = new Set(ALLOWED_ORS_GROUPS);
@@ -247,10 +237,6 @@ function normalizeIntents(parsed) {
   return normalized;
 }
 
-// Exported — module entry point. Used by ai/pipeline.js.
-// Single Gemini call that classifies the request (named/category/mixed) and
-// decomposes it into normalized POI intents; returns a safe fallback on
-// missing AI / empty prefs / parse failure.
 export async function classifyAndDecompose({
   preferences,
   profileLabel,

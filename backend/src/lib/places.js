@@ -122,8 +122,6 @@ const ORS_SOURCE_NAME_MAP = {
   shop: "shopping_mall",
 };
 
-// Used by orsFeatureToPoi.
-// Turns an OSM "lang:Title" wikipedia tag into a full wikipedia.org URL.
 function wikiToUrl(wikipediaTag) {
   if (typeof wikipediaTag !== "string") return null;
   const t = wikipediaTag.trim();
@@ -136,8 +134,6 @@ function wikiToUrl(wikipediaTag) {
   return `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`;
 }
 
-// Used by reverseGeocodePlaceName.
-// Builds the User-Agent/Referer headers Nominatim's usage policy requires.
 function nominatimHeaders() {
   return {
     "User-Agent": `RouteApp/1.0 (${APP_URL}; ${NOMINATIM_EMAIL})`,
@@ -146,8 +142,6 @@ function nominatimHeaders() {
   };
 }
 
-// Used by orsPoiSearch.
-// Auth + content headers for ORS POI requests; throws if ORS_API_KEY unset.
 function orsPOIHeaders() {
   if (!ORS_API_KEY) throw new Error("ORS_API_KEY env var is not set");
   return {
@@ -157,9 +151,6 @@ function orsPOIHeaders() {
   };
 }
 
-// Used by searchAreaByCategories.
-// Core ORS POI call: one buffered point query by category/group ids,
-// returns the raw GeoJSON feature collection.
 async function orsPoiSearch({
   lat,
   lng,
@@ -206,9 +197,6 @@ async function orsPoiSearch({
   }
 }
 
-// Used by orsFeatureToPoi.
-// Maps an ORS feature's category/source names to our app POI type,
-// defaulting to "tourist_attraction".
 function derivePrimaryType(categoryData) {
   if (!categoryData) return "tourist_attraction";
   const entries = Object.values(categoryData);
@@ -223,9 +211,6 @@ function derivePrimaryType(categoryData) {
   return "tourist_attraction";
 }
 
-// Used by searchAreaByCategories.
-// Normalizes one raw ORS GeoJSON feature into our POI shape (or null if
-// it lacks coords/name).
 function orsFeatureToPoi(feature) {
   const coords = feature.geometry?.coordinates;
   if (!coords) {
@@ -273,9 +258,6 @@ function orsFeatureToPoi(feature) {
   };
 }
 
-// Used by searchAreaByCategories.
-// Walks a polyline and emits a point roughly every stepM metres (plus the
-// last) — the sample anchors for corridor POI scans.
 function sampleRoute(coords, stepM) {
   if (!coords?.length) return [coords[0]];
   const result = [coords[0]];
@@ -292,8 +274,6 @@ function sampleRoute(coords, stepM) {
   return result;
 }
 
-// Used by searchAreaByCategories (A-to-B mode).
-// Evenly interpolates points along the straight start->end line.
 function sampleStraightLine(start, end, stepM) {
   const totalM = haversineM(start, end);
   if (totalM < stepM) return [start, end];
@@ -309,9 +289,6 @@ function sampleStraightLine(start, end, stepM) {
   return pts;
 }
 
-// Used by searchAreaByCategories (loop_radial fallback mode).
-// Returns start + 4 cardinal points at loopRadiusM — a coarse area probe
-// when no end and no loop skeleton are available.
 function sampleLoopArea(start, loopRadiusM) {
   const pts = [start];
   if (loopRadiusM <= 1_500) return pts;
@@ -326,9 +303,6 @@ function sampleLoopArea(start, loopRadiusM) {
   return pts;
 }
 
-// Exported. Used by ai/pipeline.js.
-// Main POI discovery entry: picks a sampling mode (A-to-B line / loop
-// corridor / radial), fans out ORS queries, dedupes into a POI list.
 export async function searchAreaByCategories(
   start,
   end,
@@ -399,9 +373,6 @@ export async function searchAreaByCategories(
   return pois;
 }
 
-// Exported. Used by ai/pipeline.js.
-// Resolves classified intents into ORS {groupIds, categoryIds} — prefers
-// narrow subcategory ids, else falls back to the places_type group.
 export function collectORSFilters(intents) {
   const groupIds = new Set();
   const categoryIds = new Set();
@@ -422,9 +393,6 @@ export function collectORSFilters(intents) {
   return { groupIds: [...groupIds], categoryIds: [...categoryIds] };
 }
 
-// Exported. Used by ai/pipeline.js.
-// Reverse-geocodes [lng, lat] to a human place name (city/town/.../state)
-// via Nominatim; returns null on failure.
 export async function reverseGeocodePlaceName([lng, lat], lang = "en") {
   try {
     const qs = new URLSearchParams({

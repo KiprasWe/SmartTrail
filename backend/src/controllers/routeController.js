@@ -122,7 +122,6 @@ export const loopRouting = asyncHandler(async (req, res) => {
     poiCount,
     elevationPreference,
     waypoints,
-    controlPoints,
     travelHeading = 0,
     rotation = "clockwise",
   } = req.body;
@@ -149,60 +148,47 @@ export const loopRouting = asyncHandler(async (req, res) => {
 
   let result;
   try {
-    if (controlPoints?.length > 0) {
-      result = await generateLoop({
-        start,
-        targetM: distance,
-        orsProfile,
-        orsElevOpts: buildProfileOpts(profileConfig, elevationPreference),
-        stops: waypoints,
-        controlPoints,
-        travelHeading,
-        rotation,
-      });
-    } else {
-      const results = await Promise.allSettled(
-        ["flat", "moderate", "hilly"].map((level) =>
-          generateLoop({
-            start,
-            targetM: distance,
-            orsProfile,
-            orsElevOpts: buildProfileOpts(profileConfig, level),
-            stops: waypoints,
-            travelHeading,
-            rotation,
-          }),
-        ),
-      );
+    const results = await Promise.allSettled(
+      ["flat", "moderate", "hilly"].map((level) =>
+        generateLoop({
+          start,
+          targetM: distance,
+          orsProfile,
+          orsElevOpts: buildProfileOpts(profileConfig, level),
+          stops: waypoints,
+          travelHeading,
+          rotation,
+        }),
+      ),
+    );
 
-      const candidates = results
-        .filter((r) => r.status === "fulfilled")
-        .map((r) => r.value);
+    const candidates = results
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value);
 
-      if (!candidates.length) {
-        const firstErr = results.find((r) => r.status === "rejected");
-        throw new Error(
-          firstErr?.reason?.message ?? "All loop generation attempts failed",
-        );
-      }
-
-      const sorted = [...candidates].sort(
-        (a, b) => a.routeData.ascent_m - b.routeData.ascent_m,
-      );
-      const last = sorted.length - 1;
-      const pickIdx = { flat: 0, moderate: Math.floor(last / 2), hilly: last };
-      result = sorted[pickIdx[elevationPreference] ?? Math.floor(last / 2)];
-
-      console.log(
-        `[loopRouting] elevation pick (${elevationPreference}): ` +
-          sorted.map((r) => `${r.routeData.ascent_m}m`).join(" / ") +
-          ` → chose ${result.routeData.ascent_m}m`,
+    if (!candidates.length) {
+      const firstErr = results.find((r) => r.status === "rejected");
+      throw new Error(
+        firstErr?.reason?.message ?? "All loop generation attempts failed",
       );
     }
+
+    const sorted = [...candidates].sort(
+      (a, b) => a.routeData.ascent_m - b.routeData.ascent_m,
+    );
+    const last = sorted.length - 1;
+    const pickIdx = { flat: 0, moderate: Math.floor(last / 2), hilly: last };
+    result = sorted[pickIdx[elevationPreference] ?? Math.floor(last / 2)];
+
+    console.log(
+      `[loopRouting] elevation pick (${elevationPreference}): ` +
+        sorted.map((r) => `${r.routeData.ascent_m}m`).join(" / ") +
+        ` → chose ${result.routeData.ascent_m}m`,
+    );
   } catch (err) {
     console.error(
       `[loopRouting] FAIL profile=${profile} target_km=${(distance / 1000).toFixed(2)} ` +
-        `stops=${waypoints.length} controlPoints=${controlPoints?.length ?? 0} ` +
+        `stops=${waypoints.length} ` +
         `start=[${start.join(",")}] elev=${elevationPreference}\n` +
         (err.stack ?? err.message),
     );

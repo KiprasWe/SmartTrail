@@ -98,14 +98,6 @@ describe("loopSchema", () => {
     ).toBe(true);
   });
 
-  it("accepts optional controlPoints", () => {
-    expect(
-      loopSchema.safeParse({
-        ...valid,
-        controlPoints: [[25.28, 54.69], [25.27, 54.70]],
-      }).success,
-    ).toBe(true);
-  });
 });
 
 describe("aiDirectSchema", () => {

@@ -337,9 +337,9 @@ async function correctiveRescale(
       Math.abs(correctedRouteData.distance_km * 1000 - targetM) / targetM;
     console.log(
       `[correctiveRescale] cleaned=${cleanedRouteData.distance_km}km ` +
-        `(off ${(cleanedOff * 100).toFixed(0)}%) → scale=${scale.toFixed(3)} → ` +
+        `(off ${(cleanedOff * 100).toFixed(0)}%) -> scale=${scale.toFixed(3)} -> ` +
         `corrected=${correctedRouteData.distance_km}km (off ${(correctedOff * 100).toFixed(0)}%)` +
-        `${correctedOff < cleanedOff ? " — kept corrected" : " — kept cleaned"}`,
+        `${correctedOff < cleanedOff ? " - kept corrected" : " - kept cleaned"}`,
     );
 
     if (correctedOff < cleanedOff) {
@@ -443,7 +443,7 @@ async function generateLoopWithStops({
 
   console.log(
     `[loopStops] target=${(targetM / 1000).toFixed(1)}km tspMin=${(tsp.minDistanceM / 1000).toFixed(2)}km ` +
-      `snapThreshold=${((targetM * 0.75) / 1000).toFixed(1)}km → ${snappedToMin ? "SNAP-TO-MIN (ignore target)" : "GROW circle to target"} ` +
+      `snapThreshold=${((targetM * 0.75) / 1000).toFixed(1)}km -> ${snappedToMin ? "SNAP-TO-MIN (ignore target)" : "GROW circle to target"} ` +
       `(effectiveTarget=${(effectiveTargetM / 1000).toFixed(1)}km, ${pinnedStops.length} pinned stops)`,
   );
 
@@ -457,7 +457,7 @@ async function generateLoopWithStops({
       stopRadiuses,
     );
     console.log(
-      `[loopStops] SNAP path: routed start→${pinnedStops.length} stops→start = ${routeData.distance_km}km (no target scaling applied)`,
+      `[loopStops] SNAP path: routed start->${pinnedStops.length} stops->start = ${routeData.distance_km}km (no target scaling applied)`,
     );
     return {
       routeData,
@@ -526,7 +526,7 @@ async function generateLoopWithStops({
 
     if (offRatio <= DISTANCE_TOLERANCE) {
       console.log(
-        `[loopStops] scale pass ${pass + 1}: actual=${routeData.distance_km}km off=${(offRatio * 100).toFixed(0)}% → within tolerance, stop`,
+        `[loopStops] scale pass ${pass + 1}: actual=${routeData.distance_km}km off=${(offRatio * 100).toFixed(0)}% -> within tolerance, stop`,
       );
       break;
     }
@@ -541,7 +541,7 @@ async function generateLoopWithStops({
     console.log(
       `[loopStops] scale pass ${pass + 1}: actual=${routeData.distance_km}km off=${(offRatio * 100).toFixed(0)}%` +
         `${isBest ? " (best)" : ""} | stopBudget=${(stopBudgetM / 1000).toFixed(1)}km ` +
-        `guideActual=${(guideActualM / 1000).toFixed(1)}km guideBudget=${(guideBudgetM / 1000).toFixed(1)}km → scale=${scale.toFixed(3)}`,
+        `guideActual=${(guideActualM / 1000).toFixed(1)}km guideBudget=${(guideBudgetM / 1000).toFixed(1)}km -> scale=${scale.toFixed(3)}`,
     );
     guidePoints = scaleGuidePointsFromOrigin(startLatLng, guidePoints, scale);
   }

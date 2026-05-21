@@ -50,7 +50,7 @@ export async function fetchORSDirections(orsProfile, coordinates, opts = {}) {
 
   if (!res.ok) {
     const text = await res.text();
-    const bodyExcerpt = text.length > 500 ? text.slice(0, 500) + "…" : text;
+    const bodyExcerpt = text.length > 500 ? text.slice(0, 500) + "..." : text;
     console.error(
       `[ORS directions] FAIL status=${res.status} url=${url} ` +
         `coords=${coordinates.length} ` +
@@ -241,7 +241,7 @@ export async function fetchRoutePois(
         if (!res.ok) {
           const errText = await res.text().catch(() => "");
           console.warn(
-            `[ORS POIs] HTTP ${res.status} — groups=${groupChunk} cats=${categoryIds} body=${errText.slice(0, 500)}`,
+            `[ORS POIs] HTTP ${res.status} - groups=${groupChunk} cats=${categoryIds} body=${errText.slice(0, 500)}`,
           );
           return;
         }
@@ -319,14 +319,14 @@ async function _matrixFilterBatch(orsProfile, anchors, pois, ratioThreshold) {
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       console.warn(
-        `[ors] Matrix HTTP ${res.status}: ${text.slice(0, 200)} — keeping all POIs`,
+        `[ors] Matrix HTTP ${res.status}: ${text.slice(0, 200)} - keeping all POIs`,
       );
       return pois;
     }
     distMatrix = (await res.json()).distances;
   } catch (err) {
     console.warn(
-      `[ors] Matrix filter failed: ${err.message} — keeping all POIs`,
+      `[ors] Matrix filter failed: ${err.message} - keeping all POIs`,
     );
     return pois;
   }

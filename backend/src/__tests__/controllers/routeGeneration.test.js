@@ -282,7 +282,6 @@ describe("Pridėti lankytiną vietą į maršrutą (POST /routes/add-poi-loop)",
   });
 
   it("naujo maršruto skaičiavimas nepavyko -> 502 (EXTERNAL_SERVICE_ERROR)", async () => {
-    // Pastaba: 28 lentelėje nurodyta 400; realizacija grąžina 502 dėl ORS klaidos.
     ors.fetchORSDirections.mockRejectedValue(new Error("ORS down"));
 
     const res = await request(app)
@@ -349,7 +348,7 @@ describe("Pašalinti lankytiną vietą iš maršruto (POST /routes/remove-poi-lo
       .set(authHeader())
       .send({
         routeCoords,
-        poi: [30.0, 60.0], // toli nuo maršruto -> negalima rasti aplinkkelio
+        poi: [30.0, 60.0],
         profile: "foot-walking",
         currentStats: {
           distance_km: 3,

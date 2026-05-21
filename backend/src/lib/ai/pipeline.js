@@ -121,9 +121,9 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       : Promise.resolve(null),
   ]);
 
-  if (placeStart) console.log(`[aiRouting] start → "${placeStart}"`);
-  if (placeEnd) console.log(`[aiRouting] end   → "${placeEnd}"`);
-  console.log(`[aiRouting] prompt → "${preferences?.trim() || "(none)"}"`);
+  if (placeStart) console.log(`[aiRouting] start -> "${placeStart}"`);
+  if (placeEnd) console.log(`[aiRouting] end   -> "${placeEnd}"`);
+  console.log(`[aiRouting] prompt -> "${preferences?.trim() || "(none)"}"`);
 
   const classified = await classifyAndDecompose({
     preferences,
@@ -143,9 +143,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       .replace(/[.,/#!$%^&*;:{}=\-_`~()'"“”‘’]/g, "")
       .replace(/\s+/g, " ");
 
-  // If the user mentions the start/end city names in preferences ("Vilnius", "Trakai"),
-  // Gemini can treat them as "named places". We already know start/end from coordinates,
-  // so we remove these to avoid committing redundant anchors.
   const startToken = normalizePlaceToken(placeStart);
   const endToken = normalizePlaceToken(placeEnd);
   const namedPlaces = (classified.namedPlaces ?? []).filter((n) => {
@@ -187,7 +184,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
             const subs = i.subcategories?.length
               ? ` subs=[${i.subcategories.join(",")}]`
               : "";
-            return `  • ${i.places_type || "(any)"} — "${i.theme}" (count=${i.count})${subs}`;
+            return `  - ${i.places_type || "(any)"} - "${i.theme}" (count=${i.count})${subs}`;
           })
           .join("\n"),
     );
@@ -195,15 +192,8 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
 
   onStage("enriching");
 
-  // Named-place grounding uses no bbox restriction (same as loop mode): the
-  // start coord is only a soft anchor, so a user's "must" place is found
-  // anywhere it confidently resolves rather than being silently dropped for
-  // sitting off the straight start→end corridor. The reachability filter
-  // still guards against truly unreachable matches.
   const tripBbox = null;
 
-  // Named places are grounded first: they are must-stops that shape the
-  // route geometry, so their coordinates are needed before routing.
   const groundedNamedPois =
     (mode === "named" || mode === "mixed") && namedPlaces.length
       ? await resolveNamedPlacesWithGrounding(namedPlaces, start, {
@@ -221,15 +211,10 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     const missing = namedPlaces.filter((n) => !found.has(n.toLowerCase()));
     if (missing.length > 0)
       console.warn(
-        `[aiRouting] Could not locate: ${missing.join(", ")} — proceeding without them`,
+        `[aiRouting] Could not locate: ${missing.join(", ")} - proceeding without them`,
       );
   }
 
-  // A→B baseline route ("skeleton"): start → must-stops → end via ORS,
-  // computed before POI search so POIs are scanned along the real road
-  // corridor instead of a straight crow-flies line. Null until built (or if
-  // the baseline call fails), in which case anchors fall back to the
-  // straight start→end interpolation.
   let baselineCoords = null;
 
   const buildReachAnchors = () => {
@@ -284,7 +269,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       return kept;
     } catch (err) {
       console.warn(
-        `[aiRouting] Reachability filter (${label}) failed: ${err.message} — keeping all`,
+        `[aiRouting] Reachability filter (${label}) failed: ${err.message} - keeping all`,
       );
       return pois;
     }
@@ -312,10 +297,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     _isUserWaypoint: true,
   }));
 
-  // LOOP: build the route from must-stops (user waypoints + named places)
-  // FIRST, then scan POIs along the actual routed polyline. Curated POIs are
-  // overlays and never re-route. A→B keeps the straight start→end corridor
-  // scan and routes through curated essentials (unchanged).
   let loopResult = null;
   let categoryPois = [];
   if (!hasEnd) {
@@ -366,11 +347,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
           })
         : [];
   } else {
-    // Build the A→B baseline route through the guaranteed must-stops
-    // (user waypoints + grounded named places), then end. POIs are scanned
-    // along this real road corridor. User waypoints are protected so a bad
-    // named-place coord can't knock them out. On failure we degrade to the
-    // straight start→end line (baselineCoords stays null).
+
     const mustStopCoords = [
       ...validUserWaypointCoords,
       ...reachableNamedPois.map((p) => [p.lng, p.lat]),
@@ -389,12 +366,12 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       if (baselineFeature) {
         baselineCoords = orsFeatureToRouteData(baselineFeature).coords;
         console.log(
-          `[aiRouting] A→B baseline: ${baselineCoords.length} pts through ${mustStopCoords.length} must-stops`,
+          `[aiRouting] A->B baseline: ${baselineCoords.length} pts through ${mustStopCoords.length} must-stops`,
         );
       }
     } catch (err) {
       console.warn(
-        `[aiRouting] A→B baseline failed: ${err.message} — falling back to straight-line corridor`,
+        `[aiRouting] A->B baseline failed: ${err.message} - falling back to straight-line corridor`,
       );
     }
 
@@ -417,7 +394,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
   }
 
   console.log(
-    `[aiRouting] POIs — category: ${categoryPois.length}, named: ${groundedNamedPois.length}`,
+    `[aiRouting] POIs - category: ${categoryPois.length}, named: ${groundedNamedPois.length}`,
   );
 
   const reachableCategoryPois = await runReachability(categoryPois, "category");
@@ -439,7 +416,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
 
   onStage("curating");
 
-  // Named places are always committed (essential); only category pool goes to Gemini
   const committedPois = reachableNamedPois.map((p) => ({
     ...p,
     essential: true,
@@ -461,7 +437,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     const pop = Number.isFinite(p.user_rating_count)
       ? Math.log10(1 + Math.max(0, p.user_rating_count))
       : 0;
-    // Strongly prefer POIs with rich metadata (website/wiki) to reduce random low-signal places.
     return (hasWebsite ? 100 : 0) + (hasWiki ? 140 : 0) + rating * 10 + pop * 6;
   };
 
@@ -501,7 +476,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       ]);
       console.log(`[aiRouting] Curation: ${finalPois.length} total stops`);
     } else {
-      console.warn("[aiRouting] Curation failed — falling back to rating rank");
+      console.warn("[aiRouting] Curation failed - falling back to rating rank");
       const maxStops = Math.max(2, Math.min(Math.round(distanceKm / 4), 12));
       const budget = Math.max(0, maxStops - committedPois.length);
       const ranked = [...enrichedPool]
@@ -527,12 +502,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     ? sortPoisAlongLine(finalPois, start, end)
     : sortPoisAroundLoop(finalPois, start);
 
-  // ---- LOOP: route was built from must-stops. Now fold in curated
-  // essentials that lie close to that route (Option C): each is spliced in
-  // only if its detour cost is under the per-POI cap, stopping once the
-  // cumulative added length exceeds the budget or the count cap is hit.
-  // Far-flung essentials stay as overlays. is_route_waypoint is true for
-  // must-stops + successfully spliced essentials.
   if (!hasEnd) {
     const mustStopIds = new Set(
       reachableNamedPois.filter((p) => p.place_id).map((p) => p.place_id),
@@ -555,10 +524,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       descent_m: loopData.descent_m,
     };
 
-    // Splice essentials importance-first so marquee stops get first claim
-    // on the budget (loop order would let whoever is first around the loop
-    // starve a better stop). Budget is clamped with a floor so short routes
-    // aren't starved and a ceiling so tiny routes don't balloon.
     const splicedKeys = new Set();
     const budgetKm = Math.min(
       distanceKm * AI_SPLICE_BUDGET_MAX_FRACTION,
@@ -574,7 +539,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     let spliceCount = 0;
     for (const poi of spliceCandidates) {
       if (spliceCount >= AI_SPLICE_MAX_COUNT) break;
-      // Budget only starts rejecting once the best-effort minimum is met.
       if (spliceCount >= AI_SPLICE_MIN_STOPS && addedKm >= budgetKm) break;
       if (!Number.isFinite(poi.lng) || !Number.isFinite(poi.lat)) continue;
       try {
@@ -594,7 +558,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
         });
         if (spliced.detour_delta_km > AI_SPLICE_MAX_DETOUR_KM) {
           console.log(
-            `[aiRouting] splice skip "${poi.name}" — detour +${spliced.detour_delta_km}km > ${AI_SPLICE_MAX_DETOUR_KM}km`,
+            `[aiRouting] splice skip "${poi.name}" - detour +${spliced.detour_delta_km}km > ${AI_SPLICE_MAX_DETOUR_KM}km`,
           );
           continue;
         }
@@ -602,7 +566,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
           addedKm + Math.max(0, spliced.detour_delta_km) > budgetKm;
         if (overBudget && spliceCount >= AI_SPLICE_MIN_STOPS) {
           console.log(
-            `[aiRouting] splice skip "${poi.name}" — would exceed budget (${addedKm.toFixed(1)}/${budgetKm.toFixed(1)}km), min ${AI_SPLICE_MIN_STOPS} already met`,
+            `[aiRouting] splice skip "${poi.name}" - would exceed budget (${addedKm.toFixed(1)}/${budgetKm.toFixed(1)}km), min ${AI_SPLICE_MIN_STOPS} already met`,
           );
           continue;
         }
@@ -611,11 +575,11 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
         spliceCount++;
         splicedKeys.add(poi.place_id ?? `${poi.lng},${poi.lat}`);
         console.log(
-          `[aiRouting] splice in "${poi.name}" +${spliced.detour_delta_km}km → ${routeOut.distance_km}km`,
+          `[aiRouting] splice in "${poi.name}" +${spliced.detour_delta_km}km -> ${routeOut.distance_km}km`,
         );
       } catch (err) {
         console.warn(
-          `[aiRouting] splice failed "${poi.name}": ${err.message} — left as overlay`,
+          `[aiRouting] splice failed "${poi.name}": ${err.message} - left as overlay`,
         );
       }
     }
@@ -663,14 +627,11 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
     };
   }
 
-  // ---- A→B: curated essentials become ORS waypoints (unchanged) ----
   const essentialOrdered = allSorted.filter((p) => p.essential);
   const userWaypointsInEssential = essentialOrdered.filter(
     (p) => p._isUserWaypoint,
   );
   const aiEssentialOrdered = essentialOrdered.filter((p) => !p._isUserWaypoint);
-  // Ensure every essential stop actually influences the routed path.
-  // Otherwise short trips can mark something "essential" but then drop it from ORS waypoints.
   const computedCap = Math.round(distanceKm / 7);
   const essentialCount = essentialOrdered.length;
   const waypointCap = Math.max(
@@ -686,7 +647,6 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
   ];
   const waypointCoords = waypointPois.map((p) => [p.lng, p.lat]);
 
-  // Mark which POIs are actual ORS waypoints so the frontend seeds correctly.
   const waypointPlaceIds = new Set(
     waypointPois.map((p) => p.place_id).filter(Boolean),
   );
@@ -722,7 +682,7 @@ export async function runAiPipeline(params, { onStage = () => {} } = {}) {
       "ORS returned no route",
     );
   const routeData = orsFeatureToRouteData(feature);
-  console.log(`[aiRouting] A→B final: ${routeData.distance_km} km`);
+  console.log(`[aiRouting] A->B final: ${routeData.distance_km} km`);
   return {
     profile,
     elevation_preference: elevationPreference,

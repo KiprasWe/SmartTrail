@@ -1,6 +1,6 @@
 # SmartTrail
 
-AI-assisted trail and route planning — mobile app + REST API.
+AI-assisted trail and route planning - mobile app + REST API.
 
 ## Monorepo structure
 
@@ -18,7 +18,7 @@ SmartTrail/
 - PostgreSQL (local or Docker)
 - [Expo CLI](https://docs.expo.dev/get-started/installation/)
 
-### 1 — Backend
+### 1 - Backend
 
 ```bash
 cd backend
@@ -28,7 +28,7 @@ npx prisma migrate dev    # apply migrations
 npm run dev               # starts on :5001
 ```
 
-### 2 — Frontend
+### 2 - Frontend
 
 ```bash
 cd app/smart-trail
@@ -56,7 +56,7 @@ Requires [gitleaks](https://github.com/gitleaks/gitleaks) to be installed (`brew
 ## Architecture notes
 
 - **Auth**: JWT access tokens (15 min) + hashed refresh tokens (30 days). Google OAuth via `expo-auth-session` + `google-auth-library`.
-- **Routing**: [Valhalla via Stadia Maps](https://stadiamaps.com/) for A→B/loop; ORS for alternatives.
+- **Routing**: [Valhalla via Stadia Maps](https://stadiamaps.com/) for A->B/loop; ORS for alternatives.
 - **AI planning**: Gemini 2.5 Flash selects POIs; Google Places API enriches with photos.
 - **Maps**: MapLibre GL + OpenFreeMap tiles (free vector tiles, no API key required).
 - **Storage**: Cloudflare R2 for profile pictures; PostgreSQL via Prisma for everything else.

@@ -29,12 +29,10 @@ function buildApp() {
 
 const app = buildApp();
 
-// authMiddleware kviečia prisma.user.findUnique({ where: { id } }).
-// Kai kurie valdikliai papildomai tikrina vardą per { where: { username } }.
 function mockAuthUser(user) {
   prismaMock.user.findUnique.mockImplementation(({ where }) => {
     if (where.id) return Promise.resolve(user);
-    return Promise.resolve(null); // vardas laisvas
+    return Promise.resolve(null);
   });
 }
 

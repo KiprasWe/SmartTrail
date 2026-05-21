@@ -29,8 +29,8 @@ function buildModeCurationContext(mode, namedPois, preferences) {
       return {
         modeLabel: "OPEN TRAVEL GUIDE",
         modeInstructions: [
-          `OPEN TRAVEL GUIDE MODE — user wants:\n<user_request>${preferences || "best in the trip region"}</user_request>`,
-          `Act as a passionate local guide. Be generous — don't cap at some arbitrary number.`,
+          `OPEN TRAVEL GUIDE MODE - user wants:\n<user_request>${preferences || "best in the trip region"}</user_request>`,
+          `Act as a passionate local guide. Be generous, don't cap at some arbitrary number.`,
           `If there are 8 great historic sites in the trip region, include all 8.`,
           `essential=true: genuinely worth visiting, fits the theme, worth routing to.`,
           `essential=false: nice bonus if passing by.`,
@@ -39,11 +39,11 @@ function buildModeCurationContext(mode, namedPois, preferences) {
       };
 
     case "named": {
-      const anchorList = namedPois.map((p) => `  • ${p.name}`).join("\n");
+      const anchorList = namedPois.map((p) => `  - ${p.name}`).join("\n");
       return {
         modeLabel: "STRICT ANCHOR",
         modeInstructions: [
-          `STRICT ANCHOR MODE — user named specific places they MUST visit:`,
+          `STRICT ANCHOR MODE - user named specific places they MUST visit:`,
           anchorList,
           ``,
           `1. Every USER-REQUESTED place MUST be essential=true. No exceptions.`,
@@ -56,7 +56,7 @@ function buildModeCurationContext(mode, namedPois, preferences) {
     }
 
     case "mixed": {
-      const anchorList = namedPois.map((p) => `  • ${p.name}`).join("\n");
+      const anchorList = namedPois.map((p) => `  - ${p.name}`).join("\n");
       return {
         modeLabel: "ANCHOR + TRAVEL GUIDE",
         modeInstructions: [
@@ -67,8 +67,8 @@ function buildModeCurationContext(mode, namedPois, preferences) {
           `User also wants:\n<user_request>${preferences}</user_request>`,
           ``,
           `RULES:`,
-          `1. The committed stops above are already included — do not add them again.`,
-          `2. Be generous with category stops — if 6 great parks exist in the trip region, include all 6.`,
+          `1. The committed stops above are already included - do not add them again.`,
+          `2. Be generous with category stops - if 6 great parks exist in the trip region, include all 6.`,
           `3. essential=true for anything genuinely worth the detour for the requested theme.`,
           `4. essential=false for nice-to-have bonuses.`,
           `5. Do NOT artificially limit. Quality AND quantity both matter here.`,
@@ -129,7 +129,7 @@ function buildCurationPrompt({
   const poiList = pois
     .map((p) => {
       const isNamed = userNamedPlaceIds?.has(p.place_id);
-      const tag = isNamed ? " ⚑ USER-REQUESTED — MUST be essential=true" : "";
+      const tag = isNamed ? "-USER-REQUESTED - MUST be essential=true" : "";
       return (
         `place_id=${p.place_id} | ${p.name} (${p.primary_type ?? "place"}) | ` +
         `${p.formatted_address ?? ""} | ${p.editorial_summary || p.description || ""}` +
@@ -162,23 +162,23 @@ function buildCurationPrompt({
     ``,
     `CURATION TASK:`,
     `Trip is ~${Math.round(distanceKm)} km. Budget: max ${maxStopsForDistance} ESSENTIAL category stops.`,
-    `POIs are drawn from the full trip region — the route will be built to pass through whatever you mark essential.`,
-    `Each essential stop adds real detour distance — every extra essential km you add inflates the route.`,
+    `POIs are drawn from the full trip region - the route will be built to pass through whatever you mark essential.`,
+    `Each essential stop adds real detour distance - every extra essential km you add inflates the route.`,
     `Prefer stops that are geographically spread along the trip direction rather than clustered in one area.`,
     `ESSENTIAL (essential=true): Genuinely unmissable stops worth routing to. MAX ${maxStopsForDistance}.`,
-    `  • Only the absolute best stops for the theme — ruthlessly cut the rest`,
-    `  • Examples: 10 km → ~3-4 stops, 60 km → ~6 stops, 120 km → ~8 stops`,
+    `  - Only the absolute best stops for the theme - ruthlessly cut the rest`,
+    `  - Examples: 10 km -> ~3-4 stops, 60 km -> ~6 stops, 120 km -> ~8 stops`,
     `OPTIONAL (essential=false): Shown on map if passing by, zero route impact. Be generous here.`,
     `EXCLUDE: Car parks, petrol stations, supermarkets, hardware stores, irrelevant places.`,
     ``,
     `GUIDE NOTES (resource-saving rule):`,
-    `- If essential=true → write a vivid 1-2 sentence guide_note.`,
-    `- If essential=false → set guide_note to an empty string "" (do NOT write a description).`,
-    `CRITICAL — place_id rules:`,
-    `- Each line starts with place_id=… Copy that ENTIRE token after the equals sign (full string).`,
+    `- If essential=true -> write a vivid 1-2 sentence guide_note.`,
+    `- If essential=false -> set guide_note to an empty string "" (do NOT write a description).`,
+    `CRITICAL - place_id rules:`,
+    `- Each line starts with place_id=... Copy that ENTIRE token after the equals sign (full string).`,
     `- Wrong: ors:23, ors:4, gmap:1 (too short / looks like a line number).`,
     `- Right: ors:8569856283 (same as in the list).`,
-    `Return a JSON array ordered start → destination. Every place_id MUST appear verbatim in the list above.`,
+    `Return a JSON array ordered start -> destination. Every place_id MUST appear verbatim in the list above.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -294,9 +294,9 @@ export async function tourGuideCurate({
           .map((p) => {
             const note = p.guide_note?.trim();
             const tail = note
-              ? `"${note.slice(0, 80)}${note.length > 80 ? "…" : ""}"`
-              : "—";
-            return `  ${p.essential ? "★" : "○"} ${p.name} — ${tail}`;
+              ? `"${note.slice(0, 80)}${note.length > 80 ? "..." : ""}"`
+              : "-";
+            return `  ${p.essential ? "[E]" : "[O]"} ${p.name} - ${tail}`;
           })
           .join("\n"),
     );

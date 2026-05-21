@@ -41,7 +41,7 @@ interface LocationSearchSheetProps {
 
 export function LocationSearchSheet({
   visible,
-  placeholder = "Search location…",
+  placeholder = "Search location...",
   userCoords,
   onSelect,
   onClose,
@@ -94,7 +94,6 @@ export function LocationSearchSheet({
         useNativeDriver: true,
       }).start();
     }
-
   }, [visible]);
 
   const handleChangeText = useCallback(
@@ -132,7 +131,7 @@ export function LocationSearchSheet({
           ]
             .filter(Boolean)
             .join(", ");
-          
+
           if (label) resolved = { label, coords: { lat, lng } };
         }
       }

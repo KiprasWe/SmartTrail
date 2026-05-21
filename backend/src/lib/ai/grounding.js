@@ -2,7 +2,7 @@ import { genai, GEMINI_MODEL, extractJsonArray } from "./shared.js";
 
 const GROUNDING_SYSTEM =
   "You are a geographic assistant. Use Google Maps to find the exact coordinates of requested places. " +
-  "Return only valid JSON — no explanation, no markdown, no extra text.";
+  "Return only valid JSON - no explanation, no markdown, no extra text.";
 
 function clamp(n, lo, hi) {
   const x = Number(n);
@@ -10,9 +10,6 @@ function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, x));
 }
 
-// Used by resolveNamedPlacesWithGrounding.
-// Validates a [minLng,minLat,maxLng,maxLat] bbox into a named hint object
-// (or null) for constraining Maps results.
 function bboxToHint(bbox) {
   if (!Array.isArray(bbox) || bbox.length !== 4) return null;
   const [minLng, minLat, maxLng, maxLat] = bbox.map(Number);
@@ -125,7 +122,7 @@ export async function resolveNamedPlacesWithGrounding(
     const parsed = extractJsonArray(rawText);
     if (!Array.isArray(parsed) || !parsed.length) {
       console.warn(
-        `[grounding] No valid JSON array in Maps grounding response — parsed=${JSON.stringify(parsed)}`,
+        `[grounding] No valid JSON array in Maps grounding response - parsed=${JSON.stringify(parsed)}`,
       );
       return [];
     }

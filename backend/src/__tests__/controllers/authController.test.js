@@ -48,7 +48,7 @@ beforeEach(() => {
 
 describe("Registruotis (POST /auth/signup)", () => {
   it("naujo naudotojo duomenys -> 201, naudotojo info ir tokenai", async () => {
-    prismaMock.user.findUnique.mockResolvedValue(null); // el. paštas ir vardas laisvi
+    prismaMock.user.findUnique.mockResolvedValue(null);
     prismaMock.user.create.mockResolvedValue({
       id: "u1",
       username: "newuser",
@@ -164,7 +164,7 @@ describe("Prisijungti su Google (POST /auth/google)", () => {
     });
     prismaMock.oAuthAccount.findUnique.mockResolvedValue(null);
     prismaMock.user.findUnique.mockResolvedValue(null);
-    prismaMock.user.findMany.mockResolvedValue([]); // generateUniqueUsername
+    prismaMock.user.findMany.mockResolvedValue([]);
     prismaMock.user.create.mockResolvedValue({
       id: "gu1",
       username: "googleuser",

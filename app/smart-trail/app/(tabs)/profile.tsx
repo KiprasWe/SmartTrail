@@ -22,10 +22,7 @@ import { useSavedRoutesStore } from "@/store/use-saved-routes-store";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
 import { t } from "@/lib/i18n";
-import {
-  formatDistanceMeters,
-  formatDuration,
-} from "@/lib/route-map-helpers";
+import { formatDistanceMeters, formatDuration } from "@/lib/route-map-helpers";
 import type { SavedRouteListItem } from "@/types/route";
 import { RoutePreview } from "@/components/saved-routes/route-preview";
 import {
@@ -82,10 +79,10 @@ export default function ProfileScreen() {
       setEditingRoute(null);
     } catch {
       Alert.alert(t("common.error"), t("profile.edit-route-save-error"));
-      } finally {
-        setEditSaving(false);
-      }
-    }, [editingRoute, editTitle, editDescription, updateRoute]);
+    } finally {
+      setEditSaving(false);
+    }
+  }, [editingRoute, editTitle, editDescription, updateRoute]);
 
   const handleDelete = useCallback(
     (id: string, title: string) => {
@@ -303,7 +300,7 @@ export default function ProfileScreen() {
             style={styles.avatar}
           />
           <Text style={[styles.username, { color: ts.text }]}>
-            {profile?.username ?? "—"}
+            {profile?.username ?? "-"}
           </Text>
           <Text style={[styles.email, { color: ts.muted }]}>
             {profile?.email}

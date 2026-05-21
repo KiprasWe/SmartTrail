@@ -94,7 +94,7 @@
   },
   "onboarding": {
     "slide1-title": "Susikurkite maršrutą",
-    "slide1-body": "Apibūdinkite, ko norite — 5 km ratas parke ar bėgimas prie upės — ir SmartTrail sukurs maršrutą jums.",
+    "slide1-body": "Apibūdinkite, ko norite - 5 km ratas parke ar bėgimas prie upės - ir SmartTrail sukurs maršrutą jums.",
     "slide2-title": "Tyrinėkite ir išsisaugokite",
     "slide2-body": "Išsisaugokite mėgstamiausius maršrutus ir atsisiųskite juos naudojimui be interneto.",
     "slide3-title": "Įjungti buvimo vietą",
@@ -108,7 +108,7 @@
   },
   "generate": {
     "title": "Planuoti maršrutą",
-    "mode-atob": "A → B",
+    "mode-atob": "A -> B",
     "mode-round-trip": "Ratu",
     "mode-ai": "DI",
     "transport": "Transportas",
@@ -146,14 +146,14 @@
     "placeholder-ai-prompt": "pvz. istorinės vietos ir rami kavinė pailsėti",
     "add-stop": "Pridėti sustojimą",
     "stop-label": "Sustojimas %{n}",
-    "search-start": "Ieškoti pradžios vietos…",
-    "search-destination": "Ieškoti pabaigos vietos…",
-    "search-stop": "Ieškoti sustojimo vietos…",
-    "ai-stage-planning": "Ieškoma idėjų…",
-    "ai-stage-enriching": "Ieškomos realios vietos…",
-    "ai-stage-routing": "Kuriamas maršrutas…",
+    "search-start": "Ieškoti pradžios vietos...",
+    "search-destination": "Ieškoti pabaigos vietos...",
+    "search-stop": "Ieškoti sustojimo vietos...",
+    "ai-stage-planning": "Ieškoma idėjų...",
+    "ai-stage-enriching": "Ieškomos realios vietos...",
+    "ai-stage-routing": "Kuriamas maršrutas...",
     "use-my-location": "Naudoti mano buvimo vietą",
-    "getting-location": "Gauname jūsų buvimo vietą…",
+    "getting-location": "Gauname jūsų buvimo vietą...",
     "error": "Klaida"
   },
   "route-map": {
@@ -180,11 +180,11 @@
     "save-modal-title-label": "Pavadinimas",
     "save-modal-title-placeholder": "pvz. Vingio parko ratas",
     "save-modal-description-label": "Aprašas (nebūtina)",
-    "save-modal-description-placeholder": "Pastabos apie šį maršrutą…",
+    "save-modal-description-placeholder": "Pastabos apie šį maršrutą...",
     "export-gpx": "Eksportuoti GPX",
     "export-gpx-error": "Nepavyko eksportuoti maršruto.",
     "loop-adjusted-title": "Kilpa pakoreguota",
-    "loop-snapped-to-min": "Atstumas nustatytas į %{km} km — tai trumpiausia kilpa per jūsų stoteles.",
+    "loop-snapped-to-min": "Atstumas nustatytas į %{km} km - tai trumpiausia kilpa per jūsų stoteles.",
     "loop-auto-extended": "Kilpa pailginta iki %{km} km, kad pasiektų jūsų stotelę."
   },
   "poi": {

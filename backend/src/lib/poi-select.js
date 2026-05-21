@@ -123,7 +123,7 @@ export async function geminiSelectPois(pois, count, routeCoords) {
     .map((f, i) => {
       const p = f.properties;
       const pct = poiRouteProgress(f.geometry.coordinates, routeCoords);
-      return `[${i}] ${p.name ?? "unnamed"} (${p.category ?? "unknown"}) — route position: ${pct}%`;
+      return `[${i}] ${p.name ?? "unnamed"} (${p.category ?? "unknown"}) - route position: ${pct}%`;
     })
     .join("\n");
 
@@ -131,7 +131,7 @@ export async function geminiSelectPois(pois, count, routeCoords) {
     `You are a travel guide. A user is planning a route and wants to visit exactly ${count} POI(s).`,
     `Each POI has a "route position" (0% = start, 100% = end) showing where along the route it sits.`,
     `Select the ${count} most interesting and worth-visiting places, ensuring they are spread out along the full length of the route.`,
-    `Avoid picking POIs that are all clustered near the same route position — aim for variety across the whole route.`,
+    `Avoid picking POIs that are all clustered near the same route position - aim for variety across the whole route.`,
     ``,
     `POIs near the route:`,
     poiList,
@@ -196,7 +196,7 @@ export async function fetchPoiFeatures(routeCoords, poiTypes) {
   if (!poiTypes.length) return [];
   const { groupIds, categoryIds, catFilters } = buildPoiParams(poiTypes);
   console.log(
-    `[poi-fetch] types=${poiTypes} → groupIds=${groupIds} categoryIds=${categoryIds}`,
+    `[poi-fetch] types=${poiTypes} -> groupIds=${groupIds} categoryIds=${categoryIds}`,
   );
   if (!groupIds.length && !categoryIds.length) return [];
   const raw = await fetchRoutePois(routeCoords, { groupIds, categoryIds });
@@ -205,7 +205,7 @@ export async function fetchPoiFeatures(routeCoords, poiTypes) {
     .map((f, i) => normOrsPoiFeature(f, i))
     .filter(Boolean);
   console.log(
-    `[poi-fetch] ${raw.length} raw → ${filtered.length} after cat filter → ${normed.length} named`,
+    `[poi-fetch] ${raw.length} raw -> ${filtered.length} after cat filter -> ${normed.length} named`,
   );
   return normed;
 }

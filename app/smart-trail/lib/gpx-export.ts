@@ -1,7 +1,7 @@
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 
-type Coords = [number, number]; 
+type Coords = [number, number];
 
 export interface GpxWaypoint {
   name: string;
@@ -67,7 +67,7 @@ function buildGpx({
     <name>${safeName}</name>
   </metadata>
   <wpt lat="${startLat.toFixed(7)}" lon="${startLng.toFixed(7)}">
-    <name>Start — ${safeName}</name>
+    <name>Start - ${safeName}</name>
   </wpt>
 ${wpts ? wpts + "\n" : ""}  <trk>
     <name>${safeName}</name>

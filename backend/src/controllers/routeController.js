@@ -76,7 +76,7 @@ export const directRouting = asyncHandler(async (req, res) => {
   console.log(
     `[directRouting] elevation pick (${elevationPreference}): ` +
       sorted.map((c) => `${c.ascent_m}m`).join(" / ") +
-      ` → chose ${pickedData.ascent_m}m`,
+      ` -> chose ${pickedData.ascent_m}m`,
   );
 
   const { coords, elevArr, ascent_m, descent_m, distance_km } = pickedData;
@@ -183,7 +183,7 @@ export const loopRouting = asyncHandler(async (req, res) => {
     console.log(
       `[loopRouting] elevation pick (${elevationPreference}): ` +
         sorted.map((r) => `${r.routeData.ascent_m}m`).join(" / ") +
-        ` → chose ${result.routeData.ascent_m}m`,
+        ` -> chose ${result.routeData.ascent_m}m`,
     );
   } catch (err) {
     console.error(
@@ -206,7 +206,7 @@ export const loopRouting = asyncHandler(async (req, res) => {
   console.log(
     `[loopRouting] ${result.routeData.distance_km} km ` +
       `(target ${(distance / 1000).toFixed(1)} km` +
-      `${meta.snapped_to_min ? ` — snapped to min ${meta.min_distance_km} km` : ""}) ` +
+      `${meta.snapped_to_min ? ` - snapped to min ${meta.min_distance_km} km` : ""}) ` +
       `cps=${result.controlPoints.length} stops=${waypoints.length}`,
   );
 
